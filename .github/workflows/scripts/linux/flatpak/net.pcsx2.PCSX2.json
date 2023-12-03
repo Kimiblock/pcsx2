@@ -19,10 +19,18 @@
     "--device=all",
     "--share=network",
     "--share=ipc",
+<<<<<<< HEAD
     "--socket=x11",
     "--socket=pulseaudio",
     "--talk-name=org.freedesktop.ScreenSaver",
     "--env=QT_QPA_PLATFORM=xcb"
+=======
+    "--socket=fallback-x11",
+    "--socket=wayland",
+    "--socket=pulseaudio",
+    "--filesystem=host:ro",
+    "--talk-name=org.freedesktop.ScreenSaver"
+>>>>>>> parent of f7750f04a (CI/Flatpak: Disable Wayland support)
   ],
   "modules": [
     "modules/10-libpcap.json",
