@@ -11564,6 +11564,9 @@ SLAJ-25080:
 SLAJ-25081:
   name: "FIFA World Cup - Germany 2006"
   region: "NTSC-Unk"
+  gsHWFixes:
+    mipmap: 2 # Mipmap + trilinear, improves ground textures to match sw renderer.
+    trilinearFiltering: 1
 SLAJ-25084:
   name: "Sengoku Musou 2 - Empires"
   region: "NTSC-Unk"
@@ -12143,6 +12146,7 @@ SLED-53723:
   gsHWFixes:
     recommendedBlendingLevel: 2 # Increases image brightness.
     autoFlush: 1 # Corrects vignette to match software.
+    estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
 SLED-53731:
   name: "Battlefield 2 - Modern Combat [Demo]"
   region: "PAL-E"
@@ -21557,18 +21561,21 @@ SLES-53703:
   gsHWFixes:
     recommendedBlendingLevel: 2 # Increases image brightness.
     autoFlush: 1 # Corrects vignette to match software.
+    estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
 SLES-53704:
   name: "King Kong, Peter Jackson's - The Official Game of the Movie"
   region: "PAL-R"
   gsHWFixes:
     recommendedBlendingLevel: 2 # Increases image brightness.
     autoFlush: 1 # Corrects vignette to match software.
+    estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
 SLES-53705:
   name: "King Kong, Peter Jackson's - The Official Game of the Movie"
   region: "PAL-PL-E"
   gsHWFixes:
     recommendedBlendingLevel: 2 # Increases image brightness.
     autoFlush: 1 # Corrects vignette to match software.
+    estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
 SLES-53706:
   name: "The Chronicles of Narnia - The Lion Witch and The Wardrobe"
   name-sort: "Chronicles of Narnia, The - The Lion, The Witch and The Wardrobe"
@@ -22513,15 +22520,27 @@ SLES-54061:
   name: "FIFA World Cup - Germany '06"
   region: "PAL-E"
   compat: 5
+  gsHWFixes:
+    mipmap: 2 # Mipmap + trilinear, improves ground textures to match sw renderer.
+    trilinearFiltering: 1
 SLES-54062:
   name: "FIFA World Cup - Germany '06"
   region: "PAL-F-G"
+  gsHWFixes:
+    mipmap: 2 # Mipmap + trilinear, improves ground textures to match sw renderer.
+    trilinearFiltering: 1
 SLES-54063:
   name: "FIFA World Cup 2006"
   region: "PAL-M3"
+  gsHWFixes:
+    mipmap: 2 # Mipmap + trilinear, improves ground textures to match sw renderer.
+    trilinearFiltering: 1
 SLES-54064:
   name: "FIFA World Cup 2006"
   region: "PAL-M3"
+  gsHWFixes:
+    mipmap: 2 # Mipmap + trilinear, improves ground textures to match sw renderer.
+    trilinearFiltering: 1
 SLES-54066:
   name: "X-Men - The Official Game"
   region: "PAL-M4"
@@ -22539,6 +22558,9 @@ SLES-54080:
 SLES-54081:
   name: "FIFA World Cup 2006"
   region: "PAL-PL"
+  gsHWFixes:
+    mipmap: 2 # Mipmap + trilinear, improves ground textures to match sw renderer.
+    trilinearFiltering: 1
 SLES-54083:
   name: "Pirates of the Caribbean - The Legend of Jack Sparrow"
   region: "PAL-E"
@@ -28463,6 +28485,7 @@ SLKA-25337:
   gsHWFixes:
     recommendedBlendingLevel: 2 # Increases image brightness.
     autoFlush: 1 # Corrects vignette to match software.
+    estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
 SLKA-25338:
   name: "The Godfather"
   name-sort: "Godfather, The"
@@ -41311,6 +41334,7 @@ SLPM-66211:
   gsHWFixes:
     recommendedBlendingLevel: 2 # Increases image brightness.
     autoFlush: 1 # Corrects vignette to match software.
+    estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
 SLPM-66212:
   name: セガラリー2006
   name-sort: せがらりー2006
@@ -42355,6 +42379,9 @@ SLPM-66386:
   name-sort: 2006 FIFA わーるどかっぷ どいつたいかい
   name-en: "FIFA World Cup - Germany 2006"
   region: "NTSC-J"
+  gsHWFixes:
+    mipmap: 2 # Mipmap + trilinear, improves ground textures to match sw renderer.
+    trilinearFiltering: 1
 SLPM-66387:
   name: 真・爆走デコトラ伝説 〜天下統一頂上決戦〜 [Spike The Best]
   name-sort: しん・ばくそうでことらでんせつ 〜てんかとういつちょうじょうけっせん〜 [Spike The Best]
@@ -62041,6 +62068,7 @@ SLUS-21311:
   gsHWFixes:
     recommendedBlendingLevel: 2 # Increases image brightness.
     autoFlush: 1 # Corrects vignette to match software.
+    estimateTextureRegion: 1 # Improves performance and reduces hash cache size.
 SLUS-21312:
   name: "Wallace & Gromit - The Curse of the Were-Rabbit"
   region: "NTSC-U"
@@ -62676,6 +62704,9 @@ SLUS-21408:
   name: "FIFA World Cup Germany '06"
   region: "NTSC-U"
   compat: 5
+  gsHWFixes:
+    mipmap: 2 # Mipmap + trilinear, improves ground textures to match sw renderer.
+    trilinearFiltering: 1
 SLUS-21409:
   name: "LEGO Star Wars II - The Original Trilogy"
   region: "NTSC-U"
@@ -66156,6 +66187,9 @@ SLUS-29188:
 SLUS-29189:
   name: "FIFA World Cup - Germany 2006 [Demo]"
   region: "NTSC-U"
+  gsHWFixes:
+    mipmap: 2 # Mipmap + trilinear, improves ground textures to match sw renderer.
+    trilinearFiltering: 1
 SLUS-29191:
   name: "Hitman - Blood Money & Urban Chaos [Demo]"
   region: "NTSC-U"
