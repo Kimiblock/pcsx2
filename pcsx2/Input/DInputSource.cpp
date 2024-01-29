@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2024 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #define INITGUID
 
@@ -63,8 +49,6 @@ static constexpr std::array<const char*, DInputSource::NUM_HAT_DIRECTIONS> s_hat
 
 bool DInputSource::Initialize(SettingsInterface& si, std::unique_lock<std::mutex>& settings_lock)
 {
-	LoadSettings(si);
-
 	m_dinput_module.reset(LoadLibraryW(L"dinput8"));
 	if (!m_dinput_module)
 	{
@@ -105,12 +89,6 @@ bool DInputSource::Initialize(SettingsInterface& si, std::unique_lock<std::mutex
 
 void DInputSource::UpdateSettings(SettingsInterface& si, std::unique_lock<std::mutex>& settings_lock)
 {
-	LoadSettings(si);
-}
-
-void DInputSource::LoadSettings(SettingsInterface& si)
-{
-	m_ignore_inversion = si.GetBoolValue("InputSources", "IgnoreDInputInversion", false);
 }
 
 static BOOL CALLBACK EnumCallback(LPCDIDEVICEINSTANCEW lpddi, LPVOID pvRef)
@@ -325,7 +303,7 @@ void DInputSource::UpdateMotorState(InputBindingKey large_key, InputBindingKey s
 
 std::optional<InputBindingKey> DInputSource::ParseKeyString(const std::string_view& device, const std::string_view& binding)
 {
-	if (!StringUtil::StartsWith(device, "DInput-") || binding.empty())
+	if (!device.starts_with("DInput-") || binding.empty())
 		return std::nullopt;
 
 	const std::optional<s32> player_id = StringUtil::FromChars<s32>(device.substr(7));
@@ -336,7 +314,7 @@ std::optional<InputBindingKey> DInputSource::ParseKeyString(const std::string_vi
 	key.source_type = InputSourceType::DInput;
 	key.source_index = static_cast<u32>(player_id.value());
 
-	if (StringUtil::StartsWith(binding, "+Axis") || StringUtil::StartsWith(binding, "-Axis"))
+	if (binding.starts_with("+Axis") || binding.starts_with("-Axis"))
 	{
 		std::string_view end;
 		const std::optional<u32> axis_index = StringUtil::FromChars<u32>(binding.substr(5), 10, &end);
@@ -349,7 +327,7 @@ std::optional<InputBindingKey> DInputSource::ParseKeyString(const std::string_vi
 		key.invert = (end == "~");
 		return key;
 	}
-	else if (StringUtil::StartsWith(binding, "FullAxis"))
+	else if (binding.starts_with("FullAxis"))
 	{
 		std::string_view end;
 		const std::optional<u32> axis_index = StringUtil::FromChars<u32>(binding.substr(8), 10, &end);
@@ -362,7 +340,7 @@ std::optional<InputBindingKey> DInputSource::ParseKeyString(const std::string_vi
 		key.invert = (end == "~");
 		return key;
 	}
-	else if (StringUtil::StartsWith(binding, "Hat"))
+	else if (binding.starts_with("Hat"))
 	{
 		if (binding[3] < '0' || binding[3] > '9' || binding.length() < 5)
 			return std::nullopt;
@@ -382,7 +360,7 @@ std::optional<InputBindingKey> DInputSource::ParseKeyString(const std::string_vi
 		// bad direction
 		return std::nullopt;
 	}
-	else if (StringUtil::StartsWith(binding, "Button"))
+	else if (binding.starts_with("Button"))
 	{
 		const std::optional<u32> button_index = StringUtil::FromChars<u32>(binding.substr(6));
 		if (!button_index.has_value())
@@ -397,30 +375,36 @@ std::optional<InputBindingKey> DInputSource::ParseKeyString(const std::string_vi
 	return std::nullopt;
 }
 
-std::string DInputSource::ConvertKeyToString(InputBindingKey key)
+TinyString DInputSource::ConvertKeyToString(InputBindingKey key)
 {
-	std::string ret;
+	TinyString ret;
 
 	if (key.source_type == InputSourceType::DInput)
 	{
 		if (key.source_subtype == InputSubclass::ControllerAxis)
 		{
 			const char* modifier = (key.modifier == InputModifier::FullAxis ? "Full" : (key.modifier == InputModifier::Negate ? "-" : "+"));
-			ret = fmt::format("DInput-{}/{}Axis{}{}", u32(key.source_index), modifier, u32(key.data), (key.invert && !m_ignore_inversion) ? "~" : "");
+			ret.fmt("DInput-{}/{}Axis{}{}", u32(key.source_index), modifier, u32(key.data), (key.invert && !ShouldIgnoreInversion()) ? "~" : "");
 		}
 		else if (key.source_subtype == InputSubclass::ControllerButton && key.data >= MAX_NUM_BUTTONS)
 		{
 			const u32 hat_num = (key.data - MAX_NUM_BUTTONS) / NUM_HAT_DIRECTIONS;
 			const u32 hat_dir = (key.data - MAX_NUM_BUTTONS) % NUM_HAT_DIRECTIONS;
-			ret = fmt::format("DInput-{}/Hat{}{}", u32(key.source_index), hat_num, s_hat_directions[hat_dir]);
+			ret.fmt("DInput-{}/Hat{}{}", u32(key.source_index), hat_num, s_hat_directions[hat_dir]);
 		}
 		else if (key.source_subtype == InputSubclass::ControllerButton)
 		{
-			ret = fmt::format("DInput-{}/Button{}", u32(key.source_index), u32(key.data));
+			ret.fmt("DInput-{}/Button{}", u32(key.source_index), u32(key.data));
 		}
 	}
 
 	return ret;
+}
+
+
+TinyString DInputSource::ConvertKeyToIcon(InputBindingKey key)
+{
+	return {};
 }
 
 void DInputSource::CheckForStateChanges(size_t index, const DIJOYSTATE2& new_state)

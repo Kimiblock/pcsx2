@@ -1,20 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2023 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include <time.h>
 #include <cmath>
@@ -162,6 +147,24 @@ static __fi void cpuRcntSet()
 	cpuSetNextEvent(nextsCounter, nextCounter); // Need to update on counter resets/target changes
 }
 
+
+struct vSyncTimingInfo
+{
+	double Framerate;       // frames per second (8 bit fixed)
+	GS_VideoMode VideoMode; // used to detect change (interlaced/progressive)
+	u32 Render;             // time from vblank end to vblank start (cycles)
+	u32 Blank;              // time from vblank start to vblank end (cycles)
+
+	u32 GSBlank;            // GS CSR is swapped roughly 3.5 hblank's after vblank start
+
+	u32 hSyncError;         // rounding error after the duration of a rendered frame (cycles)
+	u32 hRender;            // time from hblank end to hblank start (cycles)
+	u32 hBlank;             // time from hblank start to hblank end (cycles)
+	u32 hScanlinesPerFrame; // number of scanlines per frame (525/625 for NTSC/PAL)
+};
+
+static vSyncTimingInfo vSyncInfo;
+
 void rcntInit()
 {
 	int i;
@@ -180,32 +183,22 @@ void rcntInit()
 	counters[2].interrupt = 11;
 	counters[3].interrupt = 12;
 
+	std::memset(&vSyncInfo, 0, sizeof(vSyncInfo));
+
+	gsVideoMode = GS_VideoMode::Uninitialized;
+	gsIsInterlaced = VMManager::Internal::IsFastBootInProgress();
+
 	hsyncCounter.Mode = MODE_HRENDER;
 	hsyncCounter.sCycle = cpuRegs.cycle;
+	vsyncCounter.CycleT = vSyncInfo.hRender;
 	vsyncCounter.Mode = MODE_VRENDER;
+	vsyncCounter.CycleT = vSyncInfo.Render;
 	vsyncCounter.sCycle = cpuRegs.cycle;
 
 	for (i = 0; i < 4; i++)
 		rcntReset(i);
 	cpuRcntSet();
 }
-
-struct vSyncTimingInfo
-{
-	double Framerate;       // frames per second (8 bit fixed)
-	GS_VideoMode VideoMode; // used to detect change (interlaced/progressive)
-	u32 Render;             // time from vblank end to vblank start (cycles)
-	u32 Blank;              // time from vblank start to vblank end (cycles)
-
-	u32 GSBlank;            // GS CSR is swapped roughly 3.5 hblank's after vblank start
-
-	u32 hSyncError;         // rounding error after the duration of a rendered frame (cycles)
-	u32 hRender;            // time from hblank end to hblank start (cycles)
-	u32 hBlank;             // time from hblank start to hblank end (cycles)
-	u32 hScanlinesPerFrame; // number of scanlines per frame (525/625 for NTSC/PAL)
-};
-
-static vSyncTimingInfo vSyncInfo;
 
 static void vSyncInfoCalc(vSyncTimingInfo* info, double framesPerSecond, u32 scansPerFrame)
 {
@@ -407,7 +400,7 @@ void UpdateVSyncRate(bool force)
 				else
 					total_scanlines = SCANLINES_TOTAL_NTSC_NI;
 				Console.Error("PCSX2-Counters: Unknown video mode detected");
-				pxAssertDev(false, "Unknown video mode detected via SetGsCrt");
+				pxAssertMsg(false, "Unknown video mode detected via SetGsCrt");
 		}
 
 		const bool video_mode_initialized = gsVideoMode != GS_VideoMode::Uninitialized;
@@ -424,7 +417,7 @@ void UpdateVSyncRate(bool force)
 			Console.WriteLn(Color_Green, "(UpdateVSyncRate) Mode Changed to %s.", ReportVideoMode());
 
 		if (custom && video_mode_initialized)
-			Console.Indent().WriteLn(Color_StrongGreen, "... with user configured refresh rate: %.02f Hz", vertical_frequency);
+			Console.WriteLn(Color_StrongGreen, "  ... with user configured refresh rate: %.02f Hz", vertical_frequency);
 
 		hsyncCounter.CycleT = (hsyncCounter.Mode == MODE_HBLANK) ? vSyncInfo.hBlank : vSyncInfo.hRender;
 		vsyncCounter.CycleT = (vsyncCounter.Mode == MODE_GSBLANK) ?
@@ -441,7 +434,6 @@ extern uint eecount_on_last_vdec;
 extern bool FMVstarted;
 extern bool EnableFMV;
 
-static bool RendererSwitched = false;
 static bool s_last_fmv_state = false;
 
 static __fi void DoFMVSwitch()
@@ -486,15 +478,12 @@ static __fi void DoFMVSwitch()
 			break;
 	}
 
-	if (EmuConfig.Gamefixes.SoftwareRendererFMVHack && (GSConfig.UseHardwareRenderer() || (RendererSwitched && GSConfig.Renderer == GSRendererType::SW)))
+	if (EmuConfig.Gamefixes.SoftwareRendererFMVHack && EmuConfig.GS.UseHardwareRenderer())
 	{
-		RendererSwitched = GSConfig.UseHardwareRenderer();
 		DevCon.Warning("FMV Switch");
 		// we don't use the sw toggle here, because it'll change back to auto if set to sw
-		MTGS::SwitchRenderer(new_fmv_state ? GSRendererType::SW : EmuConfig.GS.Renderer, new_fmv_state ? GSInterlaceMode::AdaptiveTFF : EmuConfig.GS.InterlaceMode, false);
+		MTGS::SetSoftwareRendering(new_fmv_state, new_fmv_state ? GSInterlaceMode::AdaptiveTFF : EmuConfig.GS.InterlaceMode, false);
 	}
-	else
-		RendererSwitched = false;
 }
 
 static __fi void VSyncStart(u32 sCycle)
@@ -509,11 +498,19 @@ static __fi void VSyncStart(u32 sCycle)
 
 	gsPostVsyncStart(); // MUST be after framelimit; doing so before causes funk with frame times!
 
+	// Poll input after MTGS frame push, just in case it has to stall to catch up.
+	VMManager::Internal::PollInputOnCPUThread();
+
 	if (EmuConfig.Trace.Enabled && EmuConfig.Trace.EE.m_EnableAll)
 		SysTrace.EE.Counters.Write("    ================  EE COUNTER VSYNC START (frame: %d)  ================", g_FrameCount);
 
 	hwIntcIrq(INTC_VBLANK_S);
 	psxVBlankStart();
+
+	// Memcard auto ejection - Uses a tick system timed off of real time, decrementing one tick per frame.
+	AutoEject::CountDownTicks();
+	// Memcard IO detection - Uses a tick system to determine when memcards are no longer being written.
+	MemcardBusy::Decrement();
 
 	if (gates)
 		rcntStartGate(true, sCycle); // Counters Start Gate code

@@ -1,21 +1,10 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #pragma once
 
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -54,9 +43,6 @@ namespace VMManager
 {
 	/// The number of usable save state slots.
 	static constexpr s32 NUM_SAVE_STATE_SLOTS = 10;
-
-	/// Returns the currently active savestate slot.
-	s32 GetCurrentActiveSaveStateSlot();
 
 	/// The stack size to use for threads running recompilers
 	static constexpr std::size_t EMU_THREAD_STACK_SIZE = 2 * 1024 * 1024; // µVU likes recursion
@@ -210,6 +196,12 @@ namespace VMManager
 	/// Returns the path for the input profile ini file with the specified name (may not exist).
 	std::string GetInputProfilePath(const std::string_view& name);
 
+	/// Returns the path for the debugger settings json file for the specified game serial and CRC.
+	std::string GetDebuggerSettingsFilePath(const std::string_view& game_serial, u32 game_crc);
+
+	/// Returns the path for the debugger settings json file for the current game.
+	std::string GetDebuggerSettingsFilePathForCurrentGame();
+
 	/// Resizes the render window to the display size, with an optional scale.
 	/// If the scale is set to 0, the internal resolution will be used, otherwise it is treated as a multiplier to 1x.
 	void RequestDisplaySize(float scale = 0.0f);
@@ -225,7 +217,7 @@ namespace VMManager
 	u64 GetSessionPlayedTime();
 
 	/// Called when the rich presence string, provided by RetroAchievements, changes.
-	void UpdateDiscordPresence();
+	void UpdateDiscordPresence(bool update_session_time);
 
 	/// Internal callbacks, implemented in the emu core.
 	namespace Internal
@@ -235,6 +227,12 @@ namespace VMManager
 
 		/// Loads early settings. Call once on startup.
 		void LoadStartupSettings();
+
+		/// Overrides the filename used for the file log.
+		void SetFileLogPath(std::string path);
+
+		/// Prevents the system console from being displayed.
+		void SetBlockSystemConsole(bool block);
 
 		/// Initializes common host state, called on the CPU thread.
 		bool CPUThreadInitialize();
@@ -266,11 +264,15 @@ namespace VMManager
 		/// Throttles execution, or limits the frame rate.
 		void Throttle();
 
+		/// Resets/clears all execution/code caches.
+		void ClearCPUExecutionCaches();
+
 		const std::string& GetELFOverride();
 		bool IsExecutionInterrupted();
 		void ELFLoadingOnCPUThread(std::string elf_path);
 		void EntryPointCompilingOnCPUThread();
 		void VSyncOnCPUThread();
+		void PollInputOnCPUThread();
 	} // namespace Internal
 } // namespace VMManager
 
@@ -316,5 +318,5 @@ namespace Host
 		const std::string& disc_serial, u32 disc_crc, u32 current_crc);
 
 	/// Provided by the host; called once per frame at guest vsync.
-	void VSyncOnCPUThread();
+	void PumpMessagesOnCPUThread();
 } // namespace Host

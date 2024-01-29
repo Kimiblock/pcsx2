@@ -1,25 +1,12 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2023  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "BreakpointModel.h"
 
 #include "DebugTools/DebugInterface.h"
 #include "DebugTools/Breakpoints.h"
 #include "DebugTools/DisassemblyManager.h"
+#include "common/Console.h"
 
 #include "QtHost.h"
 #include "QtUtils.h"
@@ -118,7 +105,7 @@ QVariant BreakpointModel::data(const QModelIndex& index, int role) const
 					// Note: Fix up the disassemblymanager so we can use it here, instead of calling a function through the disassemblyview (yuck)
 					return m_cpu.disasm(bp->addr, true).c_str();
 				case BreakpointColumns::CONDITION:
-					return bp->hasCond ? QString::fromLocal8Bit(bp->cond.expressionString) : tr("");
+					return bp->hasCond ? QString::fromLocal8Bit(bp->cond.expressionString) : "";
 				case BreakpointColumns::HITS:
 					return 0;
 			}
@@ -164,7 +151,7 @@ QVariant BreakpointModel::data(const QModelIndex& index, int role) const
 					// Note: Fix up the disassemblymanager so we can use it here, instead of calling a function through the disassemblyview (yuck)
 					return m_cpu.disasm(bp->addr, true).c_str();
 				case BreakpointColumns::CONDITION:
-					return bp->hasCond ? QString::fromLocal8Bit(bp->cond.expressionString) : tr("");
+					return bp->hasCond ? QString::fromLocal8Bit(bp->cond.expressionString) : "";
 				case BreakpointColumns::HITS:
 					return 0;
 			}
@@ -236,6 +223,28 @@ QVariant BreakpointModel::headerData(int section, Qt::Orientation orientation, i
 			case BreakpointColumns::ENABLED:
 				//: Warning: limited space available. Abbreviate if needed.
 				return tr("X");
+			default:
+				return QVariant();
+		}
+	}
+	if (role == Qt::UserRole && orientation == Qt::Horizontal)
+	{
+		switch (section)
+		{
+			case BreakpointColumns::TYPE:
+				return "TYPE";
+			case BreakpointColumns::OFFSET:
+				return "OFFSET";
+			case BreakpointColumns::SIZE_LABEL:
+				return "SIZE / LABEL";
+			case BreakpointColumns::OPCODE:
+				return "INSTRUCTION";
+			case BreakpointColumns::CONDITION:
+				return "CONDITION";
+			case BreakpointColumns::HITS:
+				return "HITS";
+			case BreakpointColumns::ENABLED:
+				return "X";
 			default:
 				return QVariant();
 		}
@@ -336,7 +345,7 @@ bool BreakpointModel::setData(const QModelIndex& index, const QVariant& value, i
 
 bool BreakpointModel::removeRows(int row, int count, const QModelIndex& index)
 {
-	beginRemoveRows(index, row, row + count);
+	beginRemoveRows(index, row, row + count - 1);
 
 	for (int i = row; i < row + count; i++)
 	{
@@ -414,5 +423,108 @@ void BreakpointModel::refreshData()
 		m_breakpoints.push_back(mc);
 	}
 
+	endResetModel();
+}
+
+void BreakpointModel::loadBreakpointFromFieldList(QStringList fields)
+{
+	bool ok;
+	if (fields.size() != BreakpointModel::BreakpointColumns::COLUMN_COUNT)
+	{
+		Console.WriteLn("Debugger Breakpoint Model: Invalid number of columns, skipping");
+		return;
+	}
+
+	const int type = fields[BreakpointModel::BreakpointColumns::TYPE].toUInt(&ok);
+	if (!ok)
+	{
+		Console.WriteLn("Debugger Breakpoint Model: Failed to parse type '%s', skipping", fields[BreakpointModel::BreakpointColumns::TYPE].toUtf8().constData());
+		return;
+	}
+
+	// This is how we differentiate between breakpoints and memchecks
+	if (type == MEMCHECK_INVALID)
+	{
+		BreakPoint bp;
+
+		// Address
+		bp.addr = fields[BreakpointModel::BreakpointColumns::OFFSET].toUInt(&ok, 16);
+		if (!ok)
+		{
+			Console.WriteLn("Debugger Breakpoint Model: Failed to parse address '%s', skipping", fields[BreakpointModel::BreakpointColumns::OFFSET].toUtf8().constData());
+			return;
+		}
+
+		// Condition
+		if (!fields[BreakpointModel::BreakpointColumns::CONDITION].isEmpty())
+		{
+			PostfixExpression expr;
+			bp.hasCond = true;
+			bp.cond.debug = &m_cpu;
+
+			if (!m_cpu.initExpression(fields[BreakpointModel::BreakpointColumns::CONDITION].toUtf8().constData(), expr))
+			{
+				Console.WriteLn("Debugger Breakpoint Model: Failed to parse cond '%s', skipping", fields[BreakpointModel::BreakpointColumns::CONDITION].toUtf8().constData());
+				return;
+			}
+			bp.cond.expression = expr;
+			strncpy(&bp.cond.expressionString[0], fields[BreakpointModel::BreakpointColumns::CONDITION].toUtf8().constData(), sizeof(bp.cond.expressionString));
+		}
+
+		// Enabled
+		bp.enabled = fields[BreakpointModel::BreakpointColumns::ENABLED].toUInt(&ok);
+		if (!ok)
+		{
+			Console.WriteLn("Debugger Breakpoint Model: Failed to parse enable flag '%s', skipping", fields[BreakpointModel::BreakpointColumns::ENABLED].toUtf8().constData());
+			return;
+		}
+
+		insertBreakpointRows(0, 1, {bp});
+	}
+	else
+	{
+		MemCheck mc;
+		// Mode
+		if (type >= MEMCHECK_INVALID)
+		{
+			Console.WriteLn("Debugger Breakpoint Model: Failed to parse cond type '%s', skipping", fields[BreakpointModel::BreakpointColumns::TYPE].toUtf8().constData());
+			return;
+		}
+		mc.cond = static_cast<MemCheckCondition>(type);
+
+		// Address
+		QString test = fields[BreakpointModel::BreakpointColumns::OFFSET];
+		mc.start = fields[BreakpointModel::BreakpointColumns::OFFSET].toUInt(&ok, 16);
+		if (!ok)
+		{
+			Console.WriteLn("Debugger Breakpoint Model: Failed to parse address '%s', skipping", fields[BreakpointModel::BreakpointColumns::OFFSET].toUtf8().constData());
+			return;
+		}
+
+		// Size
+		mc.end = fields[BreakpointModel::BreakpointColumns::SIZE_LABEL].toUInt(&ok) + mc.start;
+		if (!ok)
+		{
+			Console.WriteLn("Debugger Breakpoint Model: Failed to parse length '%s', skipping", fields[BreakpointModel::BreakpointColumns::SIZE_LABEL].toUtf8().constData());
+			return;
+		}
+
+		// Result
+		const int result = fields[BreakpointModel::BreakpointColumns::ENABLED].toUInt(&ok);
+		if (!ok)
+		{
+			Console.WriteLn("Debugger Breakpoint Model: Failed to parse result flag '%s', skipping", fields[BreakpointModel::BreakpointColumns::ENABLED].toUtf8().constData());
+			return;
+		}
+		mc.result = static_cast<MemCheckResult>(result);
+
+		insertBreakpointRows(0, 1, {mc});
+	}
+}
+
+void BreakpointModel::clear()
+{
+	beginResetModel();
+	m_breakpoints.clear();
 	endResetModel();
 }

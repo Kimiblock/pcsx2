@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2024 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "SIO/Memcard/MemoryCardFile.h"
 
@@ -21,6 +7,7 @@
 #include "SIO/Sio.h"
 
 #include "common/Assertions.h"
+#include "common/Console.h"
 #include "common/FileSystem.h"
 #include "common/Path.h"
 #include "common/StringUtil.h"
@@ -28,7 +15,6 @@
 #include <array>
 #include <chrono>
 
-#include "System.h"
 #include "Config.h"
 #include "Host.h"
 #include "IconsFontAwesome5.h"
@@ -230,7 +216,7 @@ uint FileMcd_GetMtapSlot(uint slot)
 	{
 		case 0:
 		case 1:
-			pxFailDev("Invalid parameter in call to GetMtapSlot -- specified slot is one of the base slots, not a Multitap slot.");
+			pxFail("Invalid parameter in call to GetMtapSlot -- specified slot is one of the base slots, not a Multitap slot.");
 			break;
 
 		case 2:
@@ -271,6 +257,9 @@ void FileMemoryCard::Open()
 	{
 		m_filenames[slot] = {};
 
+		if (EmuConfig.Mcd[slot].Type != MemoryCardType::File)
+			continue;
+
 		if (FileMcd_IsMultitapSlot(slot))
 		{
 			if (!EmuConfig.Pad.MultitapPort0_Enabled && (FileMcd_GetMtapPort(slot) == 0))
@@ -279,29 +268,13 @@ void FileMemoryCard::Open()
 				continue;
 		}
 
-		std::string fname(EmuConfig.FullpathToMcd(slot));
-		std::string_view str(fname);
-		bool cont = false;
+		const std::string fname = EmuConfig.FullpathToMcd(slot);
 
-		if (fname.empty())
+		if (!EmuConfig.Mcd[slot].Enabled || fname.empty())
 		{
-			str = "[empty filename]";
-			cont = true;
-		}
-
-		if (!EmuConfig.Mcd[slot].Enabled)
-		{
-			str = "[disabled]";
-			cont = true;
-		}
-
-		if (EmuConfig.Mcd[slot].Type == MemoryCardType::File)
-			Console.WriteLn(cont ? Color_Gray : Color_Green, fmt::format("McdSlot {} [File]: {}", slot, str));
-		else
-			cont = true;
-
-		if (cont)
+			Console.WriteLnFmt("McdSlot {} [File]: [disabled/empty filename]", slot);
 			continue;
+		}
 
 		if (FileSystem::GetPathFileSize(fname.c_str()) <= 0)
 		{
@@ -316,14 +289,7 @@ void FileMemoryCard::Open()
 			}
 		}
 
-		// [TODO] : Add memcard size detection and report it to the console log.
-		//   (8MB, 256Mb, formatted, unformatted, etc ...)
-
-#ifdef _WIN32
-		FileSystem::SetPathCompression(fname.c_str(), EmuConfig.McdCompressNTFS);
-#endif
-
-		if (StringUtil::EndsWith(fname, ".bin"))
+		if (fname.ends_with(".bin"))
 		{
 			std::string newname(fname + "x");
 			if (!ConvertNoECCtoRAW(fname.c_str(), newname.c_str()))
@@ -357,6 +323,10 @@ void FileMemoryCard::Open()
 		}
 		else // Load checksum
 		{
+			Console.WriteLnFmt(Color_Green, "McdSlot {} [File]: {} [{} MB, {}]", slot, Path::GetFileName(fname),
+				(FileSystem::FSize64(m_file[slot]) + (MCD_SIZE + 1)) / MC2_MBSIZE,
+				FileMcd_IsMemoryCardFormatted(m_file[slot]) ? "Formatted" : "UNFORMATTED");
+
 			m_filenames[slot] = std::move(fname);
 			m_ispsx[slot] = FileSystem::FSize64(m_file[slot]) == 0x20000;
 			m_chkaddr = 0x210;
@@ -385,7 +355,7 @@ void FileMemoryCard::Close()
 		std::fclose(m_file[slot]);
 		m_file[slot] = nullptr;
 
-		if (StringUtil::EndsWith(m_filenames[slot], ".bin"))
+		if (m_filenames[slot].ends_with(".bin"))
 		{
 			const std::string name_in(m_filenames[slot] + 'x');
 			if (ConvertRAWtoNoECC(name_in.c_str(), m_filenames[slot].c_str()))
@@ -452,7 +422,8 @@ void FileMemoryCard::GetSizeInfo(uint slot, McdSizeInfo& outways)
 	outways.EraseBlockSizeInSectors = 16; // 0x0010
 	outways.Xor = 18; // 0x12, XOR 02 00 00 10
 
-	if (pxAssert(m_file[slot]))
+	pxAssert(m_file[slot]);
+	if (m_file[slot])
 		outways.McdSizeInSectors = static_cast<u32>(FileSystem::FSize64(m_file[slot])) / (outways.SectorSize + outways.EraseBlockSizeInSectors);
 	else
 		outways.McdSizeInSectors = 0x4000;
@@ -844,18 +815,27 @@ static bool IsMemoryCardFolder(const std::string& path)
 	return FileSystem::FileExists(superblock_path.c_str());
 }
 
-static bool IsMemoryCardFormatted(const std::string& path)
+bool FileMcd_IsMemoryCardFormatted(const std::string& path)
 {
 	auto fp = FileSystem::OpenManagedSharedCFile(path.c_str(), "rb", FileSystem::FileShareMode::DenyNone);
 	if (!fp)
 		return false;
 
+	return FileMcd_IsMemoryCardFormatted(fp.get());
+}
+
+bool FileMcd_IsMemoryCardFormatted(std::FILE* fp)
+{
 	static const char formatted_psx[] = "MC";
 	static const char formatted_string[] = "Sony PS2 Memory Card Format";
 	static constexpr size_t read_length = sizeof(formatted_string) - 1;
 
+	const s64 pos = FileSystem::FTell64(fp);
+
 	u8 data[read_length];
-	if (std::fread(data, read_length, 1, fp.get()) != 1)
+	const bool okay = (FileSystem::FSeek64(fp, 0, SEEK_SET) == 0 && std::fread(data, read_length, 1, fp) == 1);
+	FileSystem::FSeek64(fp, pos, SEEK_SET);
+	if (!okay)
 		return false;
 
 	return (std::memcmp(data, formatted_string, sizeof(formatted_string) - 1) == 0 ||
@@ -890,8 +870,8 @@ std::vector<AvailableMcdInfo> FileMcd_GetAvailableCards(bool include_in_use_card
 		}
 
 		// We only want relevant file types.
-		if (!(StringUtil::EndsWith(fd.FileName, ".ps2") || StringUtil::EndsWith(fd.FileName, ".mcr") ||
-			StringUtil::EndsWith(fd.FileName, ".mcd") || StringUtil::EndsWith(fd.FileName, ".bin")))
+		if (!(fd.FileName.ends_with(".ps2") || fd.FileName.ends_with(".mcr") ||
+			fd.FileName.ends_with(".mcd") || fd.FileName.ends_with(".bin")))
 			continue;
 
 		if (fd.Attributes & FILESYSTEM_FILE_ATTRIBUTE_DIRECTORY)
@@ -907,7 +887,7 @@ std::vector<AvailableMcdInfo> FileMcd_GetAvailableCards(bool include_in_use_card
 			if (fd.Size < MCD_SIZE)
 				continue;
 
-			const bool formatted = IsMemoryCardFormatted(fd.FileName);
+			const bool formatted = FileMcd_IsMemoryCardFormatted(fd.FileName);
 			mcds.push_back({std::move(basename), std::move(fd.FileName), fd.ModificationTime,
 				MemoryCardType::File, GetMemoryCardFileTypeFromSize(fd.Size),
 				static_cast<u32>(fd.Size), formatted});
@@ -940,7 +920,7 @@ std::optional<AvailableMcdInfo> FileMcd_GetCardInfo(const std::string_view& name
 	{
 		if (sd.Size >= MCD_SIZE)
 		{
-			const bool formatted = IsMemoryCardFormatted(path);
+			const bool formatted = FileMcd_IsMemoryCardFormatted(path);
 			ret = {std::move(basename), std::move(path), sd.ModificationTime,
 				MemoryCardType::File, GetMemoryCardFileTypeFromSize(sd.Size),
 				static_cast<u32>(sd.Size), formatted};

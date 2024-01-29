@@ -21,6 +21,8 @@ target_sources(pcsx2-qt PRIVATE
 	DisplayWidget.cpp
 	DisplayWidget.h
 	EarlyHardwareCheck.cpp
+	LogWindow.cpp
+	LogWindow.h
 	MainWindow.cpp
 	MainWindow.h
 	MainWindow.ui
@@ -64,6 +66,7 @@ target_sources(pcsx2-qt PRIVATE
 	Settings/ControllerBindingWidget.ui
 	Settings/ControllerBindingWidget_DualShock2.ui
 	Settings/ControllerBindingWidget_Guitar.ui
+	Settings/ControllerBindingWidget_Popn.ui
 	Settings/ControllerBindingWidgets.cpp
 	Settings/ControllerBindingWidgets.h
 	Settings/ControllerLEDSettingsDialog.ui
@@ -72,6 +75,7 @@ target_sources(pcsx2-qt PRIVATE
 	Settings/ControllerGlobalSettingsWidget.ui
 	Settings/ControllerMacroEditWidget.ui
 	Settings/ControllerMacroWidget.ui
+	Settings/ControllerMappingSettingsDialog.ui
 	Settings/ControllerMouseSettingsDialog.ui
 	Settings/ControllerSettingsWindow.cpp
 	Settings/ControllerSettingsWindow.h
@@ -146,6 +150,8 @@ target_sources(pcsx2-qt PRIVATE
 	Debugger/CpuWidget.cpp
 	Debugger/CpuWidget.h
 	Debugger/CpuWidget.ui
+	Debugger/DebuggerSettingsManager.cpp
+	Debugger/DebuggerSettingsManager.h
 	Debugger/DebuggerWindow.cpp
 	Debugger/DebuggerWindow.h
 	Debugger/DebuggerWindow.ui
@@ -167,6 +173,8 @@ target_sources(pcsx2-qt PRIVATE
 	Debugger/Models/ThreadModel.h
 	Debugger/Models/StackModel.cpp
 	Debugger/Models/StackModel.h
+	Debugger/Models/SavedAddressesModel.cpp
+	Debugger/Models/SavedAddressesModel.h
 	Tools/InputRecording/NewInputRecordingDlg.cpp
 	Tools/InputRecording/NewInputRecordingDlg.h
 	Tools/InputRecording/NewInputRecordingDlg.ui
@@ -179,6 +187,7 @@ target_sources(pcsx2-qt PRIVATE
 file(GLOB TS_FILES ${CMAKE_CURRENT_SOURCE_DIR}/Translations/*.ts)
 
 target_precompile_headers(pcsx2-qt PRIVATE PrecompiledHeader.h)
+set_source_files_properties(PrecompiledHeader.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
 
 target_include_directories(pcsx2-qt PRIVATE
 	${Qt6Gui_PRIVATE_INCLUDE_DIRS}
@@ -241,4 +250,5 @@ if(WIN32)
 	)
 endif()
 
+fixup_file_properties(pcsx2-qt)
 setup_main_executable(pcsx2-qt)

@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2023 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "CDVD/CDVD.h"
 #include "CDVD/Ps1CD.h"
@@ -30,8 +16,8 @@
 #include "IopHw.h"
 #include "IopDma.h"
 #include "VMManager.h"
-#include "SIO/Sio.h"
 
+#include "common/BitUtils.h"
 #include "common/Error.h"
 #include "common/FileSystem.h"
 #include "common/Path.h"
@@ -430,12 +416,12 @@ static bool cdvdUncheckedLoadDiscElf(ElfObject* elfo, IsoReader& isor, const std
 
 bool cdvdLoadElf(ElfObject* elfo, const std::string_view& elfpath, bool isPSXElf, Error* error)
 {
-	if (StringUtil::StartsWith(elfpath, "host:"))
+	if (elfpath.starts_with("host:"))
 	{
 		std::string host_filename(elfpath.substr(5));
 		return elfo->OpenFile(host_filename, isPSXElf, error);
 	}
-	else if (StringUtil::StartsWith(elfpath, "cdrom:") || StringUtil::StartsWith(elfpath, "cdrom0:"))
+	else if (elfpath.starts_with("cdrom:") || elfpath.starts_with("cdrom0:"))
 	{
 		IsoReader isor;
 		if (!isor.Open(error))
@@ -452,7 +438,7 @@ bool cdvdLoadElf(ElfObject* elfo, const std::string_view& elfpath, bool isPSXElf
 
 bool cdvdLoadDiscElf(ElfObject* elfo, IsoReader& isor, const std::string_view& elfpath, bool isPSXElf, Error* error)
 {
-	if (!StringUtil::StartsWith(elfpath, "cdrom:") && !StringUtil::StartsWith(elfpath, "cdrom0:"))
+	if (!elfpath.starts_with("cdrom:") && !elfpath.starts_with("cdrom0:"))
 		return false;
 
 	return cdvdUncheckedLoadDiscElf(elfo, isor, elfpath, isPSXElf, error);
@@ -490,7 +476,7 @@ static CDVDDiscType GetPS2ElfName(IsoReader& isor, std::string* name, std::strin
 		if (value.empty() && (lineno == (lines.size() - 1)))
 		{
 			Console.Warning("(SYSTEM.CNF) Unusual or malformed entry in SYSTEM.CNF ignored:");
-			Console.Indent().WriteLn(std::string(line));
+			Console.WarningFmt("  {}", line);
 			continue;
 		}
 
@@ -1147,23 +1133,24 @@ int cdvdReadSector()
 // inlined due to being referenced in only one place.
 __fi void cdvdActionInterrupt()
 {
+	u8 ready_status = CDVD_DRIVE_READY;
 	if (cdvd.AbortRequested)
 	{
-		Console.Warning("Action Abort");
+		Console.Warning("Action Abort %d", cdvd.Action);
 		cdvd.Error = 0x1; // Abort Error
-		cdvdUpdateReady(CDVD_DRIVE_READY | CDVD_DRIVE_ERROR);
+		ready_status |= CDVD_DRIVE_ERROR;
+		cdvdUpdateReady(ready_status);
 		cdvdUpdateStatus(CDVD_STATUS_PAUSE);
 		cdvd.WaitingDMA = false;
 		CDVDCancelReadAhead();
-		cdvdSetIrq();
-		return;
+		psxRegs.interrupt &= ~(1 << IopEvt_Cdvd); // Stop any current reads
 	}
 
 	switch (cdvd.Action)
 	{
 		case cdvdAction_Seek:
 			cdvd.Spinning = true;
-			cdvdUpdateReady(CDVD_DRIVE_READY);
+			cdvdUpdateReady(ready_status);
 			cdvd.CurrentSector = cdvd.SeekToSector;
 			cdvdUpdateStatus(CDVD_STATUS_PAUSE);
 			CDVDSECTORREADY_INT(cdvd.ReadTime);
@@ -1172,7 +1159,7 @@ __fi void cdvdActionInterrupt()
 		case cdvdAction_Standby:
 			DevCon.Warning("CDVD Standby Call");
 			cdvd.Spinning = true; //check (rama)
-			cdvdUpdateReady(CDVD_DRIVE_READY);
+			cdvdUpdateReady(ready_status);
 			cdvd.CurrentSector = cdvd.SeekToSector;
 			cdvdUpdateStatus(CDVD_STATUS_PAUSE);
 			cdvd.nextSectorsBuffered = 0;
@@ -1181,7 +1168,7 @@ __fi void cdvdActionInterrupt()
 
 		case cdvdAction_Stop:
 			cdvd.Spinning = false;
-			cdvdUpdateReady(CDVD_DRIVE_READY);
+			cdvdUpdateReady(ready_status);
 			cdvd.CurrentSector = 0;
 			cdvdUpdateStatus(CDVD_STATUS_STOP);
 			break;
@@ -1570,7 +1557,6 @@ void cdvdVsync()
 	cdvd.RTCcount = 0;
 
 	cdvdUpdateTrayState();
-	AutoEject::CountDownTicks();
 
 	cdvd.RTC.second++;
 	if (cdvd.RTC.second < 60)

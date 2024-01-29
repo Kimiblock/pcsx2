@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2023  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QFileDialog>
@@ -266,6 +252,8 @@ DEV9SettingsWidget::DEV9SettingsWidget(SettingsWindow* dialog, QWidget* parent)
 	}
 	else
 		m_ui.hddFile->setText(QString::fromUtf8(m_dialog->getStringValue("DEV9/Hdd", "HddFile", "DEV9hdd.raw").value().c_str()));
+
+	connect(m_ui.hddLBA48, QOverload<int>::of(&QCheckBox::stateChanged), this, &DEV9SettingsWidget::onHddLBA48Changed);
 
 	UpdateHddSizeUIValues();
 
@@ -734,6 +722,19 @@ void DEV9SettingsWidget::onHddSizeAccessorSpin()
 	m_ui.hddSizeSlider->setValue(m_ui.hddSizeSpinBox->value());
 }
 
+void DEV9SettingsWidget::onHddLBA48Changed(int state)
+{
+	m_ui.hddSizeSlider->setMaximum(state ? 2000 : 120);
+	m_ui.hddSizeSpinBox->setMaximum(state ? 2000 : 120);
+	m_ui.hddSizeMaxLabel->setText(state ? tr("2000") : tr("120"));
+	// Bump up min size to have ticks align with 100GiB sizes
+	m_ui.hddSizeSlider->setMinimum(state ? 100 : 40);
+	m_ui.hddSizeSpinBox->setMinimum(state ? 100 : 40);
+	m_ui.hddSizeMinLabel->setText(state ? tr("100") : tr("40"));
+
+	m_ui.hddSizeSlider->setTickInterval(state ? 100 : 5);
+}
+
 void DEV9SettingsWidget::onHddCreateClicked()
 {
 	//Do the thing
@@ -757,7 +758,7 @@ void DEV9SettingsWidget::onHddCreateClicked()
 		//GHC uses UTF8 on all platforms
 		QMessageBox::StandardButton selection =
 			QMessageBox::question(this, tr("Overwrite File?"),
-				tr("HDD image \"%1\" already exists?\n\n"
+				tr("HDD image \"%1\" already exists.\n\n"
 				   "Do you want to overwrite?")
 					.arg(QString::fromStdString(hddPath)),
 				QMessageBox::Yes | QMessageBox::No);
@@ -813,6 +814,11 @@ void DEV9SettingsWidget::UpdateHddSizeUIValues()
 	const s64 size = FileSystem::GetPathFileSize(hddPath.c_str());
 	if (size < 0)
 		return;
+
+	if (size > static_cast<s64>(120) * 1024 * 1024 * 1024)
+		m_ui.hddLBA48->setChecked(true);
+	else
+		m_ui.hddLBA48->setChecked(false);
 
 	const int sizeGB = size / 1024 / 1024 / 1024;
 	QSignalBlocker sb1(m_ui.hddSizeSpinBox);

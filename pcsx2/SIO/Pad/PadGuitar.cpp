@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2023  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "SIO/Pad/PadGuitar.h"
 #include "SIO/Pad/Pad.h"
@@ -21,21 +7,25 @@
 
 #include "Host.h"
 
+#include "IconsPromptFont.h"
+
+#include "common/Console.h"
+
 // The generic input bindings on this might seem bizarre, but they are intended to match what DS2 buttons
 // would do what actions, if you played Guitar Hero on a PS2 with a DS2 instead of a controller.
 static const InputBindingInfo s_bindings[] = {
 	// clang-format off
-	{"Up", TRANSLATE_NOOP("Pad", "Strum Up"), InputBindingInfo::Type::Button, PadGuitar::Inputs::STRUM_UP, GenericInputBinding::DPadUp},
-	{"Down", TRANSLATE_NOOP("Pad", "Strum Down"), InputBindingInfo::Type::Button, PadGuitar::Inputs::STRUM_DOWN, GenericInputBinding::DPadDown},
-	{"Select", TRANSLATE_NOOP("Pad", "Select"), InputBindingInfo::Type::Button, PadGuitar::Inputs::SELECT, GenericInputBinding::Select},
-	{"Start", TRANSLATE_NOOP("Pad", "Start"), InputBindingInfo::Type::Button, PadGuitar::Inputs::START, GenericInputBinding::Start},
-	{"Green", TRANSLATE_NOOP("Pad", "Green Fret"), InputBindingInfo::Type::Button, PadGuitar::Inputs::GREEN, GenericInputBinding::R2},
-	{"Red", TRANSLATE_NOOP("Pad", "Red Fret"), InputBindingInfo::Type::Button, PadGuitar::Inputs::RED, GenericInputBinding::Circle},
-	{"Yellow", TRANSLATE_NOOP("Pad", "Yellow Fret"), InputBindingInfo::Type::Button, PadGuitar::Inputs::YELLOW, GenericInputBinding::Triangle},
-	{"Blue", TRANSLATE_NOOP("Pad", "Blue Fret"), InputBindingInfo::Type::Button, PadGuitar::Inputs::BLUE, GenericInputBinding::Cross},
-	{"Orange", TRANSLATE_NOOP("Pad", "Orange Fret"), InputBindingInfo::Type::Button, PadGuitar::Inputs::ORANGE, GenericInputBinding::Square},
-	{"Whammy", TRANSLATE_NOOP("Pad", "Whammy Bar"), InputBindingInfo::Type::HalfAxis, PadGuitar::Inputs::WHAMMY, GenericInputBinding::LeftStickUp},
-	{"Tilt", TRANSLATE_NOOP("Pad", "Tilt Up"), InputBindingInfo::Type::Button, PadGuitar::Inputs::TILT, GenericInputBinding::L2},
+	{"Up", TRANSLATE_NOOP("Pad", "Strum Up"), nullptr, InputBindingInfo::Type::Button, PadGuitar::Inputs::STRUM_UP, GenericInputBinding::DPadUp},
+	{"Down", TRANSLATE_NOOP("Pad", "Strum Down"), nullptr, InputBindingInfo::Type::Button, PadGuitar::Inputs::STRUM_DOWN, GenericInputBinding::DPadDown},
+	{"Select", TRANSLATE_NOOP("Pad", "Select"), nullptr, InputBindingInfo::Type::Button, PadGuitar::Inputs::SELECT, GenericInputBinding::Select},
+	{"Start", TRANSLATE_NOOP("Pad", "Start"), nullptr, InputBindingInfo::Type::Button, PadGuitar::Inputs::START, GenericInputBinding::Start},
+	{"Green", TRANSLATE_NOOP("Pad", "Green Fret"), nullptr, InputBindingInfo::Type::Button, PadGuitar::Inputs::GREEN, GenericInputBinding::R2},
+	{"Red", TRANSLATE_NOOP("Pad", "Red Fret"), nullptr, InputBindingInfo::Type::Button, PadGuitar::Inputs::RED, GenericInputBinding::Circle},
+	{"Yellow", TRANSLATE_NOOP("Pad", "Yellow Fret"), nullptr, InputBindingInfo::Type::Button, PadGuitar::Inputs::YELLOW, GenericInputBinding::Triangle},
+	{"Blue", TRANSLATE_NOOP("Pad", "Blue Fret"), nullptr, InputBindingInfo::Type::Button, PadGuitar::Inputs::BLUE, GenericInputBinding::Cross},
+	{"Orange", TRANSLATE_NOOP("Pad", "Orange Fret"), nullptr, InputBindingInfo::Type::Button, PadGuitar::Inputs::ORANGE, GenericInputBinding::Square},
+	{"Whammy", TRANSLATE_NOOP("Pad", "Whammy Bar"), nullptr, InputBindingInfo::Type::HalfAxis, PadGuitar::Inputs::WHAMMY, GenericInputBinding::LeftStickUp},
+	{"Tilt", TRANSLATE_NOOP("Pad", "Tilt Up"), nullptr, InputBindingInfo::Type::Button, PadGuitar::Inputs::TILT, GenericInputBinding::L2},
 	// clang-format on
 };
 
@@ -49,7 +39,7 @@ static const SettingInfo s_settings[] = {
 };
 
 const Pad::ControllerInfo PadGuitar::ControllerInfo = {Pad::ControllerType::Guitar, "Guitar",
-	TRANSLATE_NOOP("Pad", "Guitar"), s_bindings, s_settings, Pad::VibrationCapabilities::NoVibration};
+	TRANSLATE_NOOP("Pad", "Guitar"), ICON_PF_GUITAR, s_bindings, s_settings, Pad::VibrationCapabilities::NoVibration};
 
 void PadGuitar::ConfigLog()
 {
@@ -363,6 +353,11 @@ void PadGuitar::SetAnalogInvertL(bool x, bool y)
 
 void PadGuitar::SetAnalogInvertR(bool x, bool y)
 {
+}
+
+float PadGuitar::GetEffectiveInput(u32 index) const
+{
+	return GetRawInput(index) / 255.0f;
 }
 
 u8 PadGuitar::GetRawInput(u32 index) const

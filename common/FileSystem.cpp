@@ -1,17 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2021  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "FileSystem.h"
 #include "Error.h"
@@ -25,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <numeric>
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -223,6 +212,161 @@ bool Path::IsAbsolute(const std::string_view& path)
 #endif
 }
 
+std::string Path::RealPath(const std::string_view& path)
+{
+	// Resolve non-absolute paths first.
+	std::vector<std::string_view> components;
+	if (!IsAbsolute(path))
+		components = Path::SplitNativePath(Path::Combine(FileSystem::GetWorkingDirectory(), path));
+	else
+		components = Path::SplitNativePath(path);
+
+	std::string realpath;
+	if (components.empty())
+		return realpath;
+
+	// Different to path because relative.
+	realpath.reserve(std::accumulate(components.begin(), components.end(), static_cast<size_t>(0),
+						 [](size_t l, const std::string_view& s) { return l + s.length(); }) +
+					 components.size() + 1);
+
+#ifdef _WIN32
+	std::wstring wrealpath;
+	std::vector<WCHAR> symlink_buf;
+	wrealpath.reserve(realpath.size());
+	symlink_buf.resize(path.size() + 1);
+
+	// Check for any symbolic links throughout the path while adding components.
+	bool test_symlink = true;
+	for (const std::string_view& comp : components)
+	{
+		if (!realpath.empty())
+			realpath.push_back(FS_OSPATH_SEPARATOR_CHARACTER);
+		realpath.append(comp);
+		if (test_symlink)
+		{
+			DWORD attribs;
+			if (StringUtil::UTF8StringToWideString(wrealpath, realpath) &&
+				(attribs = GetFileAttributesW(wrealpath.c_str())) != INVALID_FILE_ATTRIBUTES)
+			{
+				// if not a link, go to the next component
+				if (attribs & FILE_ATTRIBUTE_REPARSE_POINT)
+				{
+					const HANDLE hFile =
+						CreateFileW(wrealpath.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+							nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+					if (hFile != INVALID_HANDLE_VALUE)
+					{
+						// is a link! resolve it.
+						DWORD ret = GetFinalPathNameByHandleW(hFile, symlink_buf.data(), static_cast<DWORD>(symlink_buf.size()),
+							FILE_NAME_NORMALIZED);
+						if (ret > symlink_buf.size())
+						{
+							symlink_buf.resize(ret);
+							ret = GetFinalPathNameByHandleW(hFile, symlink_buf.data(), static_cast<DWORD>(symlink_buf.size()),
+								FILE_NAME_NORMALIZED);
+						}
+						if (ret != 0)
+							StringUtil::WideStringToUTF8String(realpath, std::wstring_view(symlink_buf.data(), ret));
+						else
+							test_symlink = false;
+
+						CloseHandle(hFile);
+					}
+				}
+			}
+			else
+			{
+				// not a file or link
+				test_symlink = false;
+			}
+		}
+	}
+
+	// GetFinalPathNameByHandleW() adds a \\?\ prefix, so remove it.
+	if (realpath.starts_with("\\\\?\\") && IsAbsolute(std::string_view(realpath.data() + 4, realpath.size() - 4)))
+		realpath.erase(0, 4);
+
+#else
+	// Why this monstrosity instead of calling realpath()? realpath() only works on files that exist.
+	std::string basepath;
+	std::string symlink;
+
+	basepath.reserve(realpath.capacity());
+	symlink.resize(realpath.capacity());
+
+	// Check for any symbolic links throughout the path while adding components.
+	bool test_symlink = true;
+	for (const std::string_view& comp : components)
+	{
+		if (!test_symlink)
+		{
+			realpath.push_back(FS_OSPATH_SEPARATOR_CHARACTER);
+			realpath.append(comp);
+			continue;
+		}
+
+		basepath = realpath;
+		if (realpath.empty() || realpath.back() != FS_OSPATH_SEPARATOR_CHARACTER)
+			realpath.push_back(FS_OSPATH_SEPARATOR_CHARACTER);
+		realpath.append(comp);
+
+		// Check if the last component added is a symlink
+		struct stat sb;
+		if (lstat(realpath.c_str(), &sb) != 0)
+		{
+			// Don't bother checking any further components once we error out.
+			test_symlink = false;
+			continue;
+		}
+		else if (!S_ISLNK(sb.st_mode))
+		{
+			// Nope, keep going.
+			continue;
+		}
+
+		for (;;)
+		{
+			ssize_t sz = readlink(realpath.c_str(), symlink.data(), symlink.size());
+			if (sz < 0)
+			{
+				// shouldn't happen, due to the S_ISLNK check above.
+				test_symlink = false;
+				break;
+			}
+			else if (static_cast<size_t>(sz) == symlink.size())
+			{
+				// need a larger buffer
+				symlink.resize(symlink.size() * 2);
+				continue;
+			}
+			else
+			{
+				// is a link, and we resolved it. gotta check if the symlink itself is relative :(
+				symlink.resize(static_cast<size_t>(sz));
+				if (!Path::IsAbsolute(symlink))
+				{
+					// symlink is relative to the directory of the symlink
+					realpath = basepath;
+					if (realpath.empty() || realpath.back() != FS_OSPATH_SEPARATOR_CHARACTER)
+						realpath.push_back(FS_OSPATH_SEPARATOR_CHARACTER);
+					realpath.append(symlink);
+				}
+				else
+				{
+					// Use the new, symlinked path.
+					realpath = symlink;
+				}
+
+				break;
+			}
+		}
+	}
+#endif
+
+	return realpath;
+}
+
 std::string Path::ToNativePath(const std::string_view& path)
 {
 	std::string ret;
@@ -373,11 +517,6 @@ static std::string_view::size_type GetLastSeperatorPosition(const std::string_vi
 #endif
 
 	return last_separator;
-}
-
-std::string FileSystem::GetDisplayNameFromPath(const std::string_view& path)
-{
-	return std::string(Path::GetFileName(path));
 }
 
 std::string_view Path::GetDirectory(const std::string_view& path)
@@ -937,19 +1076,19 @@ static u32 TranslateWin32Attributes(u32 Win32Attributes)
 }
 
 static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, const char* path, const char* pattern,
-	u32 flags, FileSystem::FindResultsArray* results)
+	u32 flags, FileSystem::FindResultsArray* results, std::vector<std::string>& visited)
 {
-	std::string tempStr;
+	std::string search_dir;
 	if (path)
 	{
 		if (parent_path)
-			tempStr = StringUtil::StdStringFromFormat("%s\\%s\\%s\\*", origin_path, parent_path, path);
+			search_dir = fmt::format("{}\\{}\\{}\\*", origin_path, parent_path, path);
 		else
-			tempStr = StringUtil::StdStringFromFormat("%s\\%s\\*", origin_path, path);
+			search_dir = fmt::format("{}\\{}\\*", origin_path, path);
 	}
 	else
 	{
-		tempStr = StringUtil::StdStringFromFormat("%s\\*", origin_path);
+		search_dir = fmt::format("{}\\*", origin_path);
 	}
 
 	// holder for utf-8 conversion
@@ -957,7 +1096,7 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 	std::string utf8_filename;
 	utf8_filename.reserve((sizeof(wfd.cFileName) / sizeof(wfd.cFileName[0])) * 2);
 
-	HANDLE hFind = FindFirstFileW(StringUtil::UTF8StringToWideString(tempStr).c_str(), &wfd);
+	const HANDLE hFind = FindFirstFileW(StringUtil::UTF8StringToWideString(search_dir).c_str(), &wfd);
 	if (hFind == INVALID_HANDLE_VALUE)
 		return 0;
 
@@ -965,7 +1104,7 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 	bool hasWildCards = false;
 	bool wildCardMatchAll = false;
 	u32 nFiles = 0;
-	if (std::strpbrk(pattern, "*?") != nullptr)
+	if (std::strpbrk(pattern, "*?"))
 	{
 		hasWildCards = true;
 		wildCardMatchAll = !(std::strcmp(pattern, "*"));
@@ -993,15 +1132,29 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 		{
 			if (flags & FILESYSTEM_FIND_RECURSIVE)
 			{
-				// recurse into this directory
-				if (parent_path != nullptr)
-				{
-					const std::string recurseDir = StringUtil::StdStringFromFormat("%s\\%s", parent_path, path);
-					nFiles += RecursiveFindFiles(origin_path, recurseDir.c_str(), utf8_filename.c_str(), pattern, flags, results);
-				}
+				// check that we're not following an infinite symbolic link loop
+				std::string real_recurse_dir;
+				if (parent_path)
+					real_recurse_dir = Path::RealPath(fmt::format("{}\\{}\\{}\\{}", origin_path, parent_path, path, utf8_filename));
+				else if (path)
+					real_recurse_dir = Path::RealPath(fmt::format("{}\\{}\\{}", origin_path, path, utf8_filename));
 				else
+					real_recurse_dir = Path::RealPath(fmt::format("{}\\{}", origin_path, utf8_filename));
+				if (real_recurse_dir.empty() || std::find(visited.begin(), visited.end(), real_recurse_dir) == visited.end())
 				{
-					nFiles += RecursiveFindFiles(origin_path, path, utf8_filename.c_str(), pattern, flags, results);
+					if (!real_recurse_dir.empty())
+						visited.push_back(std::move(real_recurse_dir));
+
+					// recurse into this directory
+					if (parent_path)
+					{
+						const std::string recurse_dir = fmt::format("{}\\{}", parent_path, path);
+						nFiles += RecursiveFindFiles(origin_path, recurse_dir.c_str(), utf8_filename.c_str(), pattern, flags, results, visited);
+					}
+					else
+					{
+						nFiles += RecursiveFindFiles(origin_path, path, utf8_filename.c_str(), pattern, flags, results, visited);
+					}
 				}
 			}
 
@@ -1032,23 +1185,21 @@ static u32 RecursiveFindFiles(const char* origin_path, const char* parent_path, 
 		}
 
 		// add file to list
-		// TODO string formatter, clean this mess..
 		if (!(flags & FILESYSTEM_FIND_RELATIVE_PATHS))
 		{
-			if (parent_path != nullptr)
-				outData.FileName =
-					StringUtil::StdStringFromFormat("%s\\%s\\%s\\%s", origin_path, parent_path, path, utf8_filename.c_str());
-			else if (path != nullptr)
-				outData.FileName = StringUtil::StdStringFromFormat("%s\\%s\\%s", origin_path, path, utf8_filename.c_str());
+			if (parent_path)
+				outData.FileName = fmt::format("{}\\{}\\{}\\{}", origin_path, parent_path, path, utf8_filename);
+			else if (path)
+				outData.FileName = fmt::format("{}\\{}\\{}", origin_path, path, utf8_filename);
 			else
-				outData.FileName = StringUtil::StdStringFromFormat("%s\\%s", origin_path, utf8_filename.c_str());
+				outData.FileName = fmt::format("{}\\{}", origin_path, utf8_filename);
 		}
 		else
 		{
-			if (parent_path != nullptr)
-				outData.FileName = StringUtil::StdStringFromFormat("%s\\%s\\%s", parent_path, path, utf8_filename.c_str());
-			else if (path != nullptr)
-				outData.FileName = StringUtil::StdStringFromFormat("%s\\%s", path, utf8_filename.c_str());
+			if (parent_path)
+				outData.FileName = fmt::format("{}\\{}\\{}", parent_path, path, utf8_filename);
+			else if (path)
+				outData.FileName = fmt::format("{}\\{}", path, utf8_filename);
 			else
 				outData.FileName = utf8_filename;
 		}
@@ -1075,10 +1226,18 @@ bool FileSystem::FindFiles(const char* path, const char* pattern, u32 flags, Fin
 	if (!(flags & FILESYSTEM_FIND_KEEP_ARRAY))
 		results->clear();
 
-	// enter the recursive function
-	return (RecursiveFindFiles(path, nullptr, nullptr, pattern, flags, results) > 0);
-}
+	// add self if recursive, we don't want to visit it twice
+	std::vector<std::string> visited;
+	if (flags & FILESYSTEM_FIND_RECURSIVE)
+	{
+		std::string real_path = Path::RealPath(path);
+		if (!real_path.empty())
+			visited.push_back(std::move(real_path));
+	}
 
+	// enter the recursive function
+	return (RecursiveFindFiles(path, nullptr, nullptr, pattern, flags, results, visited) > 0);
+}
 
 static void TranslateStat64(struct stat* st, const struct _stat64& st64)
 {
@@ -1411,6 +1570,7 @@ std::string FileSystem::GetProgramPath()
 		break;
 	}
 
+	// Windows symlinks don't behave silly like Linux, so no need to RealPath() it.
 	return StringUtil::WideStringToUTF8String(buffer);
 }
 
@@ -1480,23 +1640,23 @@ bool FileSystem::SetPathCompression(const char* path, bool enable)
 static_assert(sizeof(off_t) == sizeof(s64));
 
 static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, const char* Path, const char* Pattern,
-	u32 Flags, FileSystem::FindResultsArray* pResults)
+	u32 Flags, FileSystem::FindResultsArray* pResults, std::vector<std::string>& visited)
 {
 	std::string tempStr;
 	if (Path)
 	{
 		if (ParentPath)
-			tempStr = StringUtil::StdStringFromFormat("%s/%s/%s", OriginPath, ParentPath, Path);
+			tempStr = fmt::format("{}/{}/{}", OriginPath, ParentPath, Path);
 		else
-			tempStr = StringUtil::StdStringFromFormat("%s/%s", OriginPath, Path);
+			tempStr = fmt::format("{}/{}", OriginPath, Path);
 	}
 	else
 	{
-		tempStr = StringUtil::StdStringFromFormat("%s", OriginPath);
+		tempStr = fmt::format("{}", OriginPath);
 	}
 
 	DIR* pDir = opendir(tempStr.c_str());
-	if (pDir == nullptr)
+	if (!pDir)
 		return 0;
 
 	// small speed optimization for '*' case
@@ -1523,12 +1683,12 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 		}
 
 		std::string full_path;
-		if (ParentPath != nullptr)
-			full_path = StringUtil::StdStringFromFormat("%s/%s/%s/%s", OriginPath, ParentPath, Path, pDirEnt->d_name);
-		else if (Path != nullptr)
-			full_path = StringUtil::StdStringFromFormat("%s/%s/%s", OriginPath, Path, pDirEnt->d_name);
+		if (ParentPath)
+			full_path = fmt::format("{}/{}/{}/{}", OriginPath, ParentPath, Path, pDirEnt->d_name);
+		else if (Path)
+			full_path = fmt::format("{}/{}/{}", OriginPath, Path, pDirEnt->d_name);
 		else
-			full_path = StringUtil::StdStringFromFormat("%s/%s", OriginPath, pDirEnt->d_name);
+			full_path = fmt::format("{}/{}", OriginPath, pDirEnt->d_name);
 
 		FILESYSTEM_FIND_DATA outData;
 		outData.Attributes = 0;
@@ -1541,15 +1701,23 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 		{
 			if (Flags & FILESYSTEM_FIND_RECURSIVE)
 			{
-				// recurse into this directory
-				if (ParentPath != nullptr)
+				// check that we're not following an infinite symbolic link loop
+				if (std::string real_recurse_dir = Path::RealPath(full_path);
+					real_recurse_dir.empty() || std::find(visited.begin(), visited.end(), real_recurse_dir) == visited.end())
 				{
-					std::string recursiveDir = StringUtil::StdStringFromFormat("%s/%s", ParentPath, Path);
-					nFiles += RecursiveFindFiles(OriginPath, recursiveDir.c_str(), pDirEnt->d_name, Pattern, Flags, pResults);
-				}
-				else
-				{
-					nFiles += RecursiveFindFiles(OriginPath, Path, pDirEnt->d_name, Pattern, Flags, pResults);
+					if (!real_recurse_dir.empty())
+						visited.push_back(std::move(real_recurse_dir));
+
+					// recurse into this directory
+					if (ParentPath)
+					{
+						const std::string recursive_dir = fmt::format("{}/{}", ParentPath, Path);
+						nFiles += RecursiveFindFiles(OriginPath, recursive_dir.c_str(), pDirEnt->d_name, Pattern, Flags, pResults, visited);
+					}
+					else
+					{
+						nFiles += RecursiveFindFiles(OriginPath, Path, pDirEnt->d_name, Pattern, Flags, pResults, visited);
+					}
 				}
 			}
 
@@ -1581,17 +1749,16 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 		}
 
 		// add file to list
-		// TODO string formatter, clean this mess..
 		if (!(Flags & FILESYSTEM_FIND_RELATIVE_PATHS))
 		{
 			outData.FileName = std::move(full_path);
 		}
 		else
 		{
-			if (ParentPath != nullptr)
-				outData.FileName = StringUtil::StdStringFromFormat("%s/%s/%s", ParentPath, Path, pDirEnt->d_name);
-			else if (Path != nullptr)
-				outData.FileName = StringUtil::StdStringFromFormat("%s/%s", Path, pDirEnt->d_name);
+			if (ParentPath)
+				outData.FileName = fmt::format("{}/{}/{}", ParentPath, Path, pDirEnt->d_name);
+			else if (Path)
+				outData.FileName = fmt::format("{}/{}", Path, pDirEnt->d_name);
 			else
 				outData.FileName = pDirEnt->d_name;
 		}
@@ -1604,18 +1771,27 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 	return nFiles;
 }
 
-bool FileSystem::FindFiles(const char* Path, const char* Pattern, u32 Flags, FindResultsArray* pResults)
+bool FileSystem::FindFiles(const char* path, const char* pattern, u32 flags, FindResultsArray* results)
 {
 	// has a path
-	if (Path[0] == '\0')
+	if (path[0] == '\0')
 		return false;
 
 	// clear result array
-	if (!(Flags & FILESYSTEM_FIND_KEEP_ARRAY))
-		pResults->clear();
+	if (!(flags & FILESYSTEM_FIND_KEEP_ARRAY))
+		results->clear();
+
+	// add self if recursive, we don't want to visit it twice
+	std::vector<std::string> visited;
+	if (flags & FILESYSTEM_FIND_RECURSIVE)
+	{
+		std::string real_path = Path::RealPath(path);
+		if (!real_path.empty())
+			visited.push_back(std::move(real_path));
+	}
 
 	// enter the recursive function
-	return (RecursiveFindFiles(Path, nullptr, nullptr, Pattern, Flags, pResults) > 0);
+	return (RecursiveFindFiles(path, nullptr, nullptr, pattern, flags, results, visited) > 0);
 }
 
 bool FileSystem::StatFile(const char* path, struct stat* st)

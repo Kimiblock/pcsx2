@@ -1,23 +1,10 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "QtUtils.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
 #include <QtGui/QAction>
 #include <QtGui/QGuiApplication>
@@ -40,10 +27,12 @@
 #include <array>
 #include <map>
 
+#include "common/CocoaTools.h"
 #include "common/Console.h"
 
 #if defined(_WIN32)
 #include "common/RedtapeWindows.h"
+#include <Shlobj.h>
 #elif !defined(APPLE)
 #include <qpa/qplatformnativeinterface.h>
 #endif
@@ -143,12 +132,48 @@ namespace QtUtils
 		ResizeColumnsForView(view, widths);
 	}
 
+	void ShowInFileExplorer(QWidget* parent, const QFileInfo& file)
+	{
+#if defined(_WIN32)
+		std::wstring wstr = QDir::toNativeSeparators(file.absoluteFilePath()).toStdWString();
+		bool ok = false;
+		if (PIDLIST_ABSOLUTE pidl = ILCreateFromPath(wstr.c_str()))
+		{
+			ok = SUCCEEDED(SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0));
+			ILFree(pidl);
+		}
+#elif defined(__APPLE__)
+		bool ok = CocoaTools::ShowInFinder(file.absoluteFilePath().toStdString());
+#else
+		bool ok = QDesktopServices::openUrl(QUrl::fromLocalFile(file.absolutePath()));
+#endif
+		if (!ok)
+		{
+			QMessageBox::critical(parent, QCoreApplication::translate("FileOperations", "Failed to show file"),
+				QCoreApplication::translate("FileOperations", "Failed to show file in file explorer.\n\nThe file was: %1").arg(file.absoluteFilePath()));
+		}
+	}
+
+	QString GetShowInFileExplorerMessage()
+	{
+#if defined(_WIN32)
+		//: Windows action to show a file in Windows Explorer
+		return QCoreApplication::translate("FileOperations", "Show in Folder");
+#elif defined(__APPLE__)
+		//: macOS action to show a file in Finder
+		return QCoreApplication::translate("FileOperations", "Show in Finder");
+#else
+		//: Opens the system file manager to the directory containing a selected file
+		return QCoreApplication::translate("FileOperations", "Open Containing Directory");
+#endif
+	}
+
 	void OpenURL(QWidget* parent, const QUrl& qurl)
 	{
 		if (!QDesktopServices::openUrl(qurl))
 		{
-			QMessageBox::critical(parent, QObject::tr("Failed to open URL"),
-				QObject::tr("Failed to open URL.\n\nThe URL was: %1").arg(qurl.toString()));
+			QMessageBox::critical(parent, QCoreApplication::translate("FileOperations", "Failed to open URL"),
+				QCoreApplication::translate("FileOperations", "Failed to open URL.\n\nThe URL was: %1").arg(qurl.toString()));
 		}
 	}
 
@@ -269,13 +294,15 @@ namespace QtUtils
 		return wi;
 	}
 
-	QString AbstractItemModelToCSV(QAbstractItemModel* model, int role)
+	QString AbstractItemModelToCSV(QAbstractItemModel* model, int role, bool useQuotes)
 	{
 		QString csv;
 		// Header
 		for (int col = 0; col < model->columnCount(); col++)
 		{
-			csv += model->headerData(col, Qt::Horizontal, Qt::DisplayRole).toString();
+			// Encapsulate value in quotes so that commas don't break the column count.
+			QString headerLine = model->headerData(col, Qt::Horizontal, Qt::DisplayRole).toString();
+			csv += useQuotes ? QString("\"%1\"").arg(headerLine) : headerLine;
 			if (col < model->columnCount() - 1)
 				csv += ",";
 		}
@@ -287,7 +314,9 @@ namespace QtUtils
 		{
 			for (int col = 0; col < model->columnCount(); col++)
 			{
-				csv += model->data(model->index(row, col), role).toString();
+				// Encapsulate value in quotes so that commas don't break the column count.
+				QString dataLine = model->data(model->index(row, col), role).toString();
+				csv += useQuotes ? QString("\"%1\"").arg(dataLine) : dataLine;
 
 				if (col < model->columnCount() - 1)
 					csv += ",";

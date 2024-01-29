@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2023  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "Common.h"
 #include "CDVD/CDVD.h"
@@ -22,7 +8,6 @@
 #include "GS.h"
 #include "Memory.h"
 #include "Patch.h"
-#include "System.h"
 #include "R3000A.h"
 #include "R5900OpcodeTables.h"
 #include "VMManager.h"
@@ -438,7 +423,7 @@ static const void* _DynGen_DispatcherEvent()
 
 static const void* _DynGen_EnterRecompiledCode()
 {
-	pxAssertDev(DispatcherReg != NULL, "Dynamically generated dispatchers are required prior to generating EnterRecompiledCode!");
+	pxAssertMsg(DispatcherReg, "Dynamically generated dispatchers are required prior to generating EnterRecompiledCode!");
 
 	u8* retval = xGetAlignedCallTarget();
 
@@ -798,12 +783,10 @@ void recClear(u32 addr, u32 size)
 		if (s_pCurBlock == PC_GETBLOCK(pexblock->startpc))
 			continue;
 		u32 blockend = pexblock->startpc + pexblock->size * 4;
-		if ((pexblock->startpc >= addr && pexblock->startpc < addr + size * 4) || (pexblock->startpc < addr && blockend > addr))
+		if ((pexblock->startpc >= addr && pexblock->startpc < addr + size * 4) || (pexblock->startpc < addr && blockend > addr)) [[unlikely]]
 		{
-			if (!IsDevBuild)
-				Console.Error("[EE] Impossible block clearing failure");
-			else
-				pxFailDev("[EE] Impossible block clearing failure");
+			Console.Error("[EE] Impossible block clearing failure");
+			pxFail("[EE] Impossible block clearing failure");
 		}
 	}
 
@@ -1897,7 +1880,7 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 
 				else if (COP2IsQOP(cpuRegs.code))
 				{
-					Console.Warning("Possible incorrect Q value used in COP2. If the game is broken, please report to http://github.com/pcsx2/pcsx2.");
+					Console.Warning("Possible incorrect Q value used in COP2. If the game is broken, please report to https://github.com/pcsx2/pcsx2.");
 					for (u32 i = s_pCurBlockEx->startpc; i < s_nEndBlock; i += 4)
 					{
 						std::string disasm = "";
@@ -1923,7 +1906,7 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 					if ((_Rd_ == 16 && s & 1) || (_Rd_ == 17 && s & 2) || (_Rd_ == 18 && s & 4))
 					{
 						std::string disasm;
-						Console.Warning("Possible old value used in COP2 code. If the game is broken, please report to http://github.com/pcsx2/pcsx2.");
+						Console.Warning("Possible old value used in COP2 code. If the game is broken, please report to https://github.com/pcsx2/pcsx2.");
 						for (u32 i = s_pCurBlockEx->startpc; i < s_nEndBlock; i += 4)
 						{
 							disasm = "";
@@ -2100,7 +2083,6 @@ static void memory_protect_recompiled_code(u32 startpc, u32 size)
 				xJC(DispatchPageReset);
 
 				// note: clearcnt is measured per-page, not per-block!
-				ConsoleColorScope cs(Color_Gray);
 				eeRecPerfLog.Write("Manual block @ %08X : size =%3d  page/offs = 0x%05X/0x%03X  inpgsz = %d  clearcnt = %d",
 					startpc, size, inpage_ptr >> 12, inpage_ptr & 0xfff, inpage_sz, manual_counter[inpage_ptr >> 12]);
 			}
@@ -2371,7 +2353,7 @@ static void recRecompile(const u32 startpc)
 			else if ((cpuRegs.code >> 26) == 5)
 			{
 				// bne
-				if (timeout_reg != _Rs_ || _Rt_ != 0 || memRead32(i + 4) != 0)
+				if (timeout_reg != static_cast<s32>(_Rs_) || _Rt_ != 0 || memRead32(i + 4) != 0)
 					is_timeout_loop = false;
 			}
 			else if (cpuRegs.code != 0)

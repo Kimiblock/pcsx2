@@ -1,25 +1,17 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 
-#include "ImGuiFullscreen.h"
-#include "IconsFontAwesome5.h"
+#include "fmt/core.h"
+#include "Host.h"
+#include "GS/Renderers/Common/GSDevice.h"
+#include "GS/Renderers/Common/GSTexture.h"
+#include "ImGui/ImGuiAnimated.h"
+#include "ImGui/ImGuiFullscreen.h"
+
 #include "common/Assertions.h"
+#include "common/Console.h"
 #include "common/Easing.h"
 #include "common/Image.h"
 #include "common/LRUCache.h"
@@ -28,14 +20,14 @@
 #include "common/StringUtil.h"
 #include "common/Threading.h"
 #include "common/Timer.h"
-#include "fmt/core.h"
-#include "Host.h"
-#include "GS/Renderers/Common/GSDevice.h"
-#include "GS/Renderers/Common/GSTexture.h"
+
+#include "IconsFontAwesome5.h"
 #include "imgui_internal.h"
 #include "imgui_stdlib.h"
+
 #include <array>
 #include <cmath>
+#include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <variant>
@@ -43,6 +35,8 @@
 namespace ImGuiFullscreen
 {
 	using MessageDialogCallbackVariant = std::variant<InfoMessageDialogCallback, ConfirmMessageDialogCallback>;
+
+	static constexpr float MENU_BACKGROUND_ANIMATION_TIME = 0.5f;
 
 	static std::optional<Common::RGBA8Image> LoadTextureImage(const char* path);
 	static std::shared_ptr<GSTexture> UploadTexture(const char* path, const Common::RGBA8Image& image);
@@ -55,7 +49,6 @@ namespace ImGuiFullscreen
 	static void DrawBackgroundProgressDialogs(ImVec2& position, float spacing);
 	static void DrawNotifications(ImVec2& position, float spacing);
 	static void DrawToast();
-	static void GetMenuButtonFrameBounds(float height, ImVec2* pos, ImVec2* size);
 	static bool MenuButtonFrame(const char* str_id, bool enabled, float height, bool* visible, bool* hovered, ImRect* bb,
 		ImGuiButtonFlags flags = 0, float hover_alpha = 1.0f);
 	static void PopulateFileSelectorItems();
@@ -68,6 +61,7 @@ namespace ImGuiFullscreen
 	ImFont* g_icon_font = nullptr;
 
 	float g_layout_scale = 1.0f;
+	float g_rcp_layout_scale = 1.0f;
 	float g_layout_padding_left = 0.0f;
 	float g_layout_padding_top = 0.0f;
 
@@ -123,6 +117,12 @@ namespace ImGuiFullscreen
 	static std::string s_message_dialog_message;
 	static std::array<std::string, 3> s_message_dialog_buttons;
 	static MessageDialogCallbackVariant s_message_dialog_callback;
+
+	static ImAnimatedVec2 s_menu_button_frame_min_animated;
+	static ImAnimatedVec2 s_menu_button_frame_max_animated;
+	static bool s_had_hovered_menu_item = false;
+	static bool s_has_hovered_menu_item = false;
+	static bool s_rendered_menu_item_border = false;
 
 	struct FileSelectorItem
 	{
@@ -210,6 +210,7 @@ bool ImGuiFullscreen::Initialize(const char* placeholder_image_path)
 
 	s_texture_load_thread_quit.store(false, std::memory_order_release);
 	s_texture_load_thread.Start(TextureLoaderThread);
+	ResetMenuButtonFrame();
 	return true;
 }
 
@@ -429,6 +430,8 @@ bool ImGuiFullscreen::UpdateLayoutScale()
 		g_layout_padding_left = 0.0f;
 	}
 
+	g_rcp_layout_scale = 1.0f / g_layout_scale;
+
 	return g_layout_scale != old_scale;
 }
 
@@ -491,6 +494,9 @@ void ImGuiFullscreen::EndLayout()
 	DrawToast();
 
 	PopResetLayout();
+
+	s_rendered_menu_item_border = false;
+	s_had_hovered_menu_item = std::exchange(s_has_hovered_menu_item, false);
 }
 
 void ImGuiFullscreen::PushResetLayout()
@@ -682,6 +688,26 @@ void ImGuiFullscreen::EndFullscreenWindow()
 	ImGui::PopStyleColor();
 }
 
+void ImGuiFullscreen::PrerenderMenuButtonBorder()
+{
+	if (!s_had_hovered_menu_item)
+		return;
+
+	// updating might finish the animation
+	const ImVec2 min = s_menu_button_frame_min_animated.UpdateAndGetValue();
+	const ImVec2 max = s_menu_button_frame_max_animated.UpdateAndGetValue();
+	const ImU32 col = ImGui::GetColorU32(ImGuiCol_ButtonHovered);
+
+	const float t = std::min<float>(std::abs(std::sin(ImGui::GetTime() * 0.75) * 1.1), 1.0f);
+	ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetColorU32(ImGuiCol_Border, t));
+
+	ImGui::RenderFrame(min, max, col, true, 0.0f);
+
+	ImGui::PopStyleColor();
+
+	s_rendered_menu_item_border = true;
+}
+
 void ImGuiFullscreen::BeginMenuButtons(u32 num_items, float y_align, float x_padding, float y_padding, float item_height)
 {
 	s_menu_button_index = 0;
@@ -699,6 +725,8 @@ void ImGuiFullscreen::BeginMenuButtons(u32 num_items, float y_align, float x_pad
 		if (window_height > total_size)
 			ImGui::SetCursorPosY((window_height - total_size) * y_align);
 	}
+
+	PrerenderMenuButtonBorder();
 }
 
 void ImGuiFullscreen::EndMenuButtons()
@@ -734,6 +762,47 @@ void ImGuiFullscreen::GetMenuButtonFrameBounds(float height, ImVec2* pos, ImVec2
 	ImGuiWindow* window = ImGui::GetCurrentWindow();
 	*pos = window->DC.CursorPos;
 	*size = ImVec2(window->WorkRect.GetWidth(), LayoutScale(height) + ImGui::GetStyle().FramePadding.y * 2.0f);
+}
+
+void ImGuiFullscreen::DrawMenuButtonFrame(const ImVec2& p_min, const ImVec2& p_max, ImU32 fill_col,
+	bool border /* = true */, float rounding /* = 0.0f */)
+{
+	ImVec2 frame_min = p_min;
+	ImVec2 frame_max = p_max;
+
+	if (ImGui::GetIO().NavVisible && ImGui::GetHoveredID() != ImGui::GetItemID())
+	{
+		if (!s_had_hovered_menu_item)
+		{
+			s_menu_button_frame_min_animated.Reset(frame_min);
+			s_menu_button_frame_max_animated.Reset(frame_max);
+			s_has_hovered_menu_item = true;
+		}
+		else
+		{
+			if (frame_min.x != s_menu_button_frame_min_animated.GetEndValue().x ||
+				frame_min.y != s_menu_button_frame_min_animated.GetEndValue().y)
+			{
+				s_menu_button_frame_min_animated.Start(s_menu_button_frame_min_animated.GetCurrentValue(), frame_min,
+					MENU_BACKGROUND_ANIMATION_TIME);
+			}
+			if (frame_max.x != s_menu_button_frame_max_animated.GetEndValue().x ||
+				frame_max.y != s_menu_button_frame_max_animated.GetEndValue().x)
+			{
+				s_menu_button_frame_max_animated.Start(s_menu_button_frame_max_animated.GetCurrentValue(), frame_max,
+					MENU_BACKGROUND_ANIMATION_TIME);
+			}
+			frame_min = s_menu_button_frame_min_animated.UpdateAndGetValue();
+			frame_max = s_menu_button_frame_max_animated.UpdateAndGetValue();
+			s_has_hovered_menu_item = true;
+		}
+	}
+
+	if (!s_rendered_menu_item_border)
+	{
+		s_rendered_menu_item_border = true;
+		ImGui::RenderFrame(frame_min, frame_max, fill_col, border, rounding);
+	}
 }
 
 bool ImGuiFullscreen::MenuButtonFrame(
@@ -786,7 +855,7 @@ bool ImGuiFullscreen::MenuButtonFrame(
 			const float t = std::min<float>(std::abs(std::sin(ImGui::GetTime() * 0.75) * 1.1), 1.0f);
 			ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetColorU32(ImGuiCol_Border, t));
 
-			ImGui::RenderFrame(bb->Min, bb->Max, col, true, 0.0f);
+			DrawMenuButtonFrame(bb->Min, bb->Max, col, true, 0.0f);
 
 			ImGui::PopStyleColor();
 		}
@@ -812,6 +881,12 @@ bool ImGuiFullscreen::MenuButtonFrame(const char* str_id, bool enabled, float he
 	*min = bb.Min;
 	*max = bb.Max;
 	return result;
+}
+
+void ImGuiFullscreen::ResetMenuButtonFrame()
+{
+	s_had_hovered_menu_item = false;
+	s_has_hovered_menu_item = false;
 }
 
 void ImGuiFullscreen::MenuHeading(const char* title, bool draw_line /*= true*/)
@@ -1066,7 +1141,7 @@ bool ImGuiFullscreen::FloatingButton(const char* text, float x, float y, float w
 			const float t = std::min<float>(std::abs(std::sin(ImGui::GetTime() * 0.75) * 1.1), 1.0f);
 			const ImU32 col = ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered, 1.0f);
 			ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetColorU32(ImGuiCol_Border, t));
-			ImGui::RenderFrame(bb.Min, bb.Max, col, true, 0.0f);
+			DrawMenuButtonFrame(bb.Min, bb.Max, col, true, 0.0f);
 			ImGui::PopStyleColor();
 		}
 	}
@@ -1557,7 +1632,7 @@ bool ImGuiFullscreen::NavButton(const char* title, bool is_active, bool enabled 
 		if (hovered)
 		{
 			const ImU32 col = ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered, 1.0f);
-			ImGui::RenderFrame(bb.Min, bb.Max, col, true, 0.0f);
+			DrawMenuButtonFrame(bb.Min, bb.Max, col, true, 0.0f);
 		}
 	}
 	else
@@ -1634,7 +1709,7 @@ bool ImGuiFullscreen::NavTab(const char* title, bool is_active, bool enabled /* 
 		hovered ? ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered, 1.0f) :
 				  ImGui::GetColorU32(is_active ? background : ImVec4(background.x, background.y, background.z, 0.5f));
 
-	ImGui::RenderFrame(bb.Min, bb.Max, col, true, 0.0f);
+	DrawMenuButtonFrame(bb.Min, bb.Max, col, true, 0.0f);
 
 #if 0
 	// This looks a bit rubbish... but left it here if someone thinks they can improve it.
@@ -2246,10 +2321,12 @@ void ImGuiFullscreen::OpenBackgroundProgressDialog(const char* str_id, std::stri
 
 	std::unique_lock<std::mutex> lock(s_background_progress_lock);
 
+#ifdef PCSX2_DEVBUILD
 	for (const BackgroundProgressDialogData& data : s_background_progress_dialogs)
 	{
-		pxAssert(data.id != id);
+		pxAssertMsg(data.id != id, "Duplicate background progress dialog open");
 	}
+#endif
 
 	BackgroundProgressDialogData data;
 	data.id = id;

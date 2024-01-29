@@ -1,26 +1,16 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2023 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "AsyncFileReader.h"
 #include "CsoFileReader.h"
 
+#include "common/Console.h"
 #include "common/FileSystem.h"
 #include "common/Error.h"
 #include "common/StringUtil.h"
+
+#include "fmt/format.h"
+#include "lz4.h"
 
 #include <zlib.h>
 
@@ -49,31 +39,12 @@ CsoFileReader::~CsoFileReader()
 	Close();
 }
 
-bool CsoFileReader::CanHandle(const std::string& fileName, const std::string& displayName)
-{
-	bool supported = false;
-	if (StringUtil::EndsWith(displayName, ".cso"))
-	{
-		FILE* fp = FileSystem::OpenCFile(fileName.c_str(), "rb");
-		CsoHeader hdr;
-		if (fp)
-		{
-			if (fread(&hdr, 1, sizeof(hdr), fp) == sizeof(hdr))
-			{
-				supported = ValidateHeader(hdr, nullptr);
-			}
-			fclose(fp);
-		}
-	}
-	return supported;
-}
-
 bool CsoFileReader::ValidateHeader(const CsoHeader& hdr, Error* error)
 {
-	if (hdr.magic[0] != 'C' || hdr.magic[1] != 'I' || hdr.magic[2] != 'S' || hdr.magic[3] != 'O')
+	if ((hdr.magic[0] != 'C' && hdr.magic[0] != 'Z') || hdr.magic[1] != 'I' || hdr.magic[2] != 'S' || hdr.magic[3] != 'O')
 	{
 		// Invalid magic, definitely a bad file.
-		Error::SetString(error, "File is not a CHD.");
+		Error::SetString(error, "File is not a CSO or ZSO.");
 		return false;
 	}
 	if (hdr.ver > 1)
@@ -141,6 +112,9 @@ bool CsoFileReader::ReadFileHeader(Error* error)
 	m_indexShift = hdr.align;
 	m_totalSize = hdr.total_bytes;
 
+	// Check compression method (ZSO=lz4)
+	m_uselz4 = hdr.magic[0] == 'Z';
+
 	return true;
 }
 
@@ -167,14 +141,18 @@ bool CsoFileReader::InitializeBuffers(Error* error)
 		return false;
 	}
 
-	m_z_stream = std::make_unique<z_stream>();
-	m_z_stream->zalloc = Z_NULL;
-	m_z_stream->zfree = Z_NULL;
-	m_z_stream->opaque = Z_NULL;
-	if (inflateInit2(m_z_stream.get(), -15) != Z_OK)
+	// initialize zlib if not a ZSO
+	if (!m_uselz4)
 	{
-		Error::SetString(error, "Unable to initialize zlib for CSO decompression.");
-		return false;
+		m_z_stream = std::make_unique<z_stream>();
+		m_z_stream->zalloc = Z_NULL;
+		m_z_stream->zfree = Z_NULL;
+		m_z_stream->opaque = Z_NULL;
+		if (inflateInit2(m_z_stream.get(), -15) != Z_OK)
+		{
+			Error::SetString(error, "Unable to initialize zlib for CSO decompression.");
+			return false;
+		}
 	}
 
 	return true;
@@ -256,18 +234,34 @@ int CsoFileReader::ReadChunk(void* dst, s64 chunkID)
 		// This might be less bytes than frameRawSize in case of padding on the last frame.
 		// This is because the index positions must be aligned.
 		const u32 readRawBytes = fread(m_readBuffer.get(), 1, frameRawSize, m_src);
+		bool success = false;
 
-		m_z_stream->next_in = m_readBuffer.get();
-		m_z_stream->avail_in = readRawBytes;
-		m_z_stream->next_out = static_cast<Bytef*>(dst);
-		m_z_stream->avail_out = m_frameSize;
+		if (m_uselz4)
+		{
+			const int src_size = static_cast<int>(readRawBytes);
+			const int dst_size = static_cast<int>(m_frameSize);
+			const char* src_buf = reinterpret_cast<const char*>(m_readBuffer.get());
+			char* dst_buf = static_cast<char*>(dst);
+			
+			const int res = LZ4_decompress_safe_partial(src_buf, dst_buf, src_size, dst_size, dst_size);
+			success = (res > 0);
+		}
+		else
+		{
+			m_z_stream->next_in = m_readBuffer.get();
+			m_z_stream->avail_in = readRawBytes;
+			m_z_stream->next_out = static_cast<Bytef*>(dst);
+			m_z_stream->avail_out = m_frameSize;
 
-		int status = inflate(m_z_stream.get(), Z_FINISH);
-		bool success = status == Z_STREAM_END && m_z_stream->total_out == m_frameSize;
+			const int status = inflate(m_z_stream.get(), Z_FINISH);
+			success = (status == Z_STREAM_END && m_z_stream->total_out == m_frameSize);
+		}
 
 		if (!success)
-			Console.Error("Unable to decompress CSO frame using zlib.");
-		inflateReset(m_z_stream.get());
+			Console.Error(fmt::format("Unable to decompress CSO frame using {}", (m_uselz4)? "lz4":"zlib"));
+		
+		if (!m_uselz4)
+			inflateReset(m_z_stream.get());
 
 		return success ? m_frameSize : 0;
 	}

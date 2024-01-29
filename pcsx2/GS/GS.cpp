@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2023 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "Config.h"
 #include "Counters.h"
@@ -34,6 +20,7 @@
 #include "GS/Renderers/Null/GSRendererNull.h"
 #include "GS/Renderers/HW/GSRendererHW.h"
 #include "GS/Renderers/HW/GSTextureReplacements.h"
+#include "VMManager.h"
 
 #ifdef ENABLE_OPENGL
 #include "GS/Renderers/OpenGL/GSDeviceOGL.h"
@@ -58,6 +45,7 @@
 #include "common/Console.h"
 #include "common/FileSystem.h"
 #include "common/Path.h"
+#include "common/SmallString.h"
 #include "common/StringUtil.h"
 
 #include "fmt/format.h"
@@ -65,6 +53,8 @@
 #include <fstream>
 
 Pcsx2Config::GSOptions GSConfig;
+
+static GSRendererType GSCurrentRenderer;
 
 static u64 s_next_manual_present_time;
 
@@ -81,6 +71,17 @@ void GSshutdown()
 
 	// ensure all screenshots have been saved
 	GSJoinSnapshotThreads();
+}
+
+GSRendererType GSGetCurrentRenderer()
+{
+	return GSCurrentRenderer;
+}
+
+bool GSIsHardwareRenderer()
+{
+	// Null gets flagged as hw.
+	return (GSCurrentRenderer != GSRendererType::SW);
 }
 
 static RenderAPI GetAPIForRenderer(GSRendererType renderer)
@@ -106,6 +107,7 @@ static RenderAPI GetAPIForRenderer(GSRendererType renderer)
 			return RenderAPI::Metal;
 #endif
 
+			// We could end up here if we ever removed a renderer.
 		default:
 			return GetAPIForRenderer(GSUtil::GetPreferredRenderer());
 	}
@@ -170,7 +172,7 @@ static bool OpenGSDevice(GSRendererType renderer, bool clear_state_on_fail, bool
 	GSConfig.OsdShowGPU = GSConfig.OsdShowGPU && g_gs_device->SetGPUTimingEnabled(true);
 
 	Console.WriteLn(Color_StrongGreen, "%s Graphics Driver Info:", GSDevice::RenderAPIToString(new_api));
-	Console.Indent().WriteLn(g_gs_device->GetDriverInfo());
+	Console.WriteLn(g_gs_device->GetDriverInfo());
 
 	return true;
 }
@@ -187,6 +189,9 @@ static void CloseGSDevice(bool clear_state)
 
 static bool OpenGSRenderer(GSRendererType renderer, u8* basemem)
 {
+	// Must be done first, initialization routines in GSState use GSIsHardwareRenderer().
+	GSCurrentRenderer = renderer;
+
 	if (renderer == GSRendererType::Null)
 	{
 		g_gs_renderer = std::make_unique<GSRendererNull>();
@@ -218,20 +223,18 @@ static void CloseGSRenderer()
 	}
 }
 
-bool GSreopen(bool recreate_device, bool recreate_renderer, const Pcsx2Config::GSOptions& old_config)
+bool GSreopen(bool recreate_device, GSRendererType new_renderer, std::optional<const Pcsx2Config::GSOptions*> old_config)
 {
-	Console.WriteLn("Reopening GS with %s device and %s renderer", recreate_device ? "new" : "existing",
-		recreate_renderer ? "new" : "existing");
+	Console.WriteLn("Reopening GS with %s device", recreate_device ? "new" : "existing");
 
-	if (recreate_renderer)
-		g_gs_renderer->Flush(GSState::GSFlushReason::GSREOPEN);
+	g_gs_renderer->Flush(GSState::GSFlushReason::GSREOPEN);
 
 	if (GSConfig.UserHacks_ReadTCOnClose)
 		g_gs_renderer->ReadbackTextureCache();
 
 	std::string capture_filename;
 	GSVector2i capture_size;
-	if (GSCapture::IsCapturing() && (recreate_renderer || recreate_device))
+	if (GSCapture::IsCapturing())
 	{
 		capture_filename = GSCapture::GetNextCaptureFileName();
 		capture_size = GSCapture::GetSize();
@@ -242,31 +245,21 @@ bool GSreopen(bool recreate_device, bool recreate_renderer, const Pcsx2Config::G
 	u8* basemem = g_gs_renderer->GetRegsMem();
 
 	freezeData fd = {};
-	std::unique_ptr<u8[]> fd_data;
-	if (recreate_renderer)
+	if (g_gs_renderer->Freeze(&fd, true) != 0)
 	{
-		if (g_gs_renderer->Freeze(&fd, true) != 0)
-		{
-			Console.Error("(GSreopen) Failed to get GS freeze size");
-			return false;
-		}
-
-		fd_data = std::make_unique<u8[]>(fd.size);
-		fd.data = fd_data.get();
-		if (g_gs_renderer->Freeze(&fd, false) != 0)
-		{
-			Console.Error("(GSreopen) Failed to freeze GS");
-			return false;
-		}
-
-		CloseGSRenderer();
+		Console.Error("(GSreopen) Failed to get GS freeze size");
+		return false;
 	}
-	else
+
+	std::unique_ptr<u8[]> fd_data = std::make_unique<u8[]>(fd.size);
+	fd.data = fd_data.get();
+	if (g_gs_renderer->Freeze(&fd, false) != 0)
 	{
-		// Make sure nothing is left over.
-		g_gs_renderer->PurgeTextureCache(true, true, true);
-		g_gs_renderer->PurgePool();
+		Console.Error("(GSreopen) Failed to freeze GS");
+		return false;
 	}
+
+	CloseGSRenderer();
 
 	if (recreate_device)
 	{
@@ -274,8 +267,7 @@ bool GSreopen(bool recreate_device, bool recreate_renderer, const Pcsx2Config::G
 		const bool recreate_window = (g_gs_device->GetRenderAPI() != GetAPIForRenderer(GSConfig.Renderer));
 		CloseGSDevice(false);
 
-		if (!OpenGSDevice(GSConfig.Renderer, false, recreate_window) ||
-			(recreate_renderer && !OpenGSRenderer(GSConfig.Renderer, basemem)))
+		if (!OpenGSDevice(new_renderer, false, recreate_window))
 		{
 			Host::AddKeyedOSDMessage("GSReopenFailed",
 				TRANSLATE_STR("GS", "Failed to reopen, restoring old configuration."),
@@ -283,9 +275,10 @@ bool GSreopen(bool recreate_device, bool recreate_renderer, const Pcsx2Config::G
 
 			CloseGSDevice(false);
 
-			GSConfig = old_config;
-			if (!OpenGSDevice(GSConfig.Renderer, false, recreate_window) ||
-				(recreate_renderer && !OpenGSRenderer(GSConfig.Renderer, basemem)))
+			if (old_config.has_value())
+				GSConfig = *old_config.value();
+
+			if (!OpenGSDevice(GSConfig.Renderer, false, recreate_window))
 			{
 				pxFailRel("Failed to reopen GS on old config");
 				Host::ReleaseRenderWindow();
@@ -293,22 +286,17 @@ bool GSreopen(bool recreate_device, bool recreate_renderer, const Pcsx2Config::G
 			}
 		}
 	}
-	else if (recreate_renderer)
+
+	if (!OpenGSRenderer(new_renderer, basemem))
 	{
-		if (!OpenGSRenderer(GSConfig.Renderer, basemem))
-		{
-			Console.Error("(GSreopen) Failed to create new renderer");
-			return false;
-		}
+		Console.Error("(GSreopen) Failed to create new renderer");
+		return false;
 	}
 
-	if (recreate_renderer)
+	if (g_gs_renderer->Defrost(&fd) != 0)
 	{
-		if (g_gs_renderer->Defrost(&fd) != 0)
-		{
-			Console.Error("(GSreopen) Failed to defrost");
-			return false;
-		}
+		Console.Error("(GSreopen) Failed to defrost");
+		return false;
 	}
 
 	if (!capture_filename.empty())
@@ -319,11 +307,10 @@ bool GSreopen(bool recreate_device, bool recreate_renderer, const Pcsx2Config::G
 
 bool GSopen(const Pcsx2Config::GSOptions& config, GSRendererType renderer, u8* basemem)
 {
+	GSConfig = config;
+
 	if (renderer == GSRendererType::Auto)
 		renderer = GSUtil::GetPreferredRenderer();
-
-	GSConfig = config;
-	GSConfig.Renderer = renderer;
 
 	bool res = OpenGSDevice(renderer, true, false);
 	if (res)
@@ -347,6 +334,9 @@ bool GSopen(const Pcsx2Config::GSOptions& config, GSRendererType renderer, u8* b
 
 void GSclose()
 {
+	if (GSCapture::IsCapturing())
+		GSCapture::EndCapture();
+
 	CloseGSRenderer();
 	CloseGSDevice(true);
 	Host::ReleaseRenderWindow();
@@ -504,8 +494,11 @@ void GSThrottlePresentation()
 
 void GSGameChanged()
 {
-	if (GSConfig.UseHardwareRenderer())
+	if (GSIsHardwareRenderer())
 		GSTextureReplacements::GameChanged();
+
+	if (!VMManager::HasValidVM() && GSCapture::IsCapturing())
+		GSCapture::EndCapture();
 }
 
 bool GSHasDisplayWindow()
@@ -619,15 +612,15 @@ void GSgetInternalResolution(int* width, int* height)
 	*height = res.y;
 }
 
-void GSgetStats(std::string& info)
+void GSgetStats(SmallStringBase& info)
 {
 	GSPerfMon& pm = g_perfmon;
 	const char* api_name = GSDevice::RenderAPIToString(g_gs_device->GetRenderAPI());
-	if (GSConfig.Renderer == GSRendererType::SW)
+	if (GSCurrentRenderer == GSRendererType::SW)
 	{
 		const double fps = GetVerticalFrequency();
 		const double fillrate = pm.Get(GSPerfMon::Fillrate);
-		fmt::format_to(std::back_inserter(info), "{} SW | {} S | {} P | {} D | {:.2f} U | {:.2f} D | {:.2f} mpps",
+		info.fmt("{} SW | {} S | {} P | {} D | {:.2f} U | {:.2f} D | {:.2f} mpps",
 			api_name,
 			(int)pm.Get(GSPerfMon::SyncPoint),
 			(int)pm.Get(GSPerfMon::Prim),
@@ -636,13 +629,13 @@ void GSgetStats(std::string& info)
 			pm.Get(GSPerfMon::Unswizzle) / 1024,
 			fps * fillrate / (1024 * 1024));
 	}
-	else if (GSConfig.Renderer == GSRendererType::Null)
+	else if (GSCurrentRenderer == GSRendererType::Null)
 	{
 		fmt::format_to(std::back_inserter(info), "{} Null", api_name);
 	}
 	else
 	{
-		fmt::format_to(std::back_inserter(info), "{} HW | {} P | {} D | {} DC | {} B | {} RP | {} RB | {} TC | {} TU",
+		info.fmt("{} HW | {} P | {} D | {} DC | {} B | {} RP | {} RB | {} TC | {} TU",
 			api_name,
 			(int)pm.Get(GSPerfMon::Prim),
 			(int)pm.Get(GSPerfMon::Draw),
@@ -655,7 +648,7 @@ void GSgetStats(std::string& info)
 	}
 }
 
-void GSgetMemoryStats(std::string& info)
+void GSgetMemoryStats(SmallStringBase& info)
 {
 	if (!g_texture_cache)
 		return;
@@ -691,7 +684,7 @@ void GSgetTitleStats(std::string& info)
 		"Automatic", "None", "Weave tff", "Weave bff", "Bob tff", "Bob bff", "Blend tff", "Blend bff", "Adaptive tff", "Adaptive bff"};
 
 	const char* api_name = GSDevice::RenderAPIToString(g_gs_device->GetRenderAPI());
-	const char* hw_sw_name = (GSConfig.Renderer == GSRendererType::Null) ? " Null" : (GSConfig.UseHardwareRenderer() ? " HW" : " SW");
+	const char* hw_sw_name = (GSCurrentRenderer == GSRendererType::Null) ? " Null" : (GSIsHardwareRenderer() ? " HW" : " SW");
 	const char* deinterlace_mode = deinterlace_modes[static_cast<int>(GSConfig.InterlaceMode)];
 
 	const char* interlace_mode = ReportInterlaceMode();
@@ -703,10 +696,8 @@ void GSUpdateConfig(const Pcsx2Config::GSOptions& new_config)
 {
 	Pcsx2Config::GSOptions old_config(std::move(GSConfig));
 	GSConfig = new_config;
-	GSConfig.Renderer = (GSConfig.Renderer == GSRendererType::Auto) ? GSUtil::GetPreferredRenderer() : GSConfig.Renderer;
 	if (!g_gs_renderer)
 		return;
-
 
 	// Handle OSD scale changes by pushing a window resize through.
 	if (new_config.OsdScale != old_config.OsdScale)
@@ -715,7 +706,7 @@ void GSUpdateConfig(const Pcsx2Config::GSOptions& new_config)
 	// Options which need a full teardown/recreate.
 	if (!GSConfig.RestartOptionsAreEqual(old_config))
 	{
-		if (!GSreopen(true, true, old_config))
+		if (!GSreopen(true, GSConfig.Renderer, &old_config))
 			pxFailRel("Failed to do full GS reopen");
 		return;
 	}
@@ -724,7 +715,7 @@ void GSUpdateConfig(const Pcsx2Config::GSOptions& new_config)
 	if (GSConfig.SWExtraThreads != old_config.SWExtraThreads ||
 		GSConfig.SWExtraThreadsHeight != old_config.SWExtraThreadsHeight)
 	{
-		if (!GSreopen(false, true, old_config))
+		if (!GSreopen(false, GSConfig.Renderer, &old_config))
 			pxFailRel("Failed to do quick GS reopen");
 
 		return;
@@ -744,7 +735,7 @@ void GSUpdateConfig(const Pcsx2Config::GSOptions& new_config)
 
 	// reload texture cache when trilinear filtering or TC options change
 	if (
-		(GSConfig.UseHardwareRenderer() && GSConfig.HWMipmap != old_config.HWMipmap) ||
+		(GSIsHardwareRenderer() && GSConfig.HWMipmap != old_config.HWMipmap) ||
 		GSConfig.TexturePreloading != old_config.TexturePreloading ||
 		GSConfig.TriFilter != old_config.TriFilter ||
 		GSConfig.GPUPaletteConversion != old_config.GPUPaletteConversion ||
@@ -768,7 +759,7 @@ void GSUpdateConfig(const Pcsx2Config::GSOptions& new_config)
 		g_gs_device->ClearSamplerCache();
 
 	// texture dumping/replacement options
-	if (GSConfig.UseHardwareRenderer())
+	if (GSIsHardwareRenderer())
 		GSTextureReplacements::UpdateConfig(old_config);
 
 	// clear the hash texture cache since we might have replacements now
@@ -786,21 +777,21 @@ void GSUpdateConfig(const Pcsx2Config::GSOptions& new_config)
 	}
 }
 
-void GSSwitchRenderer(GSRendererType new_renderer, GSInterlaceMode new_interlace)
+void GSSetSoftwareRendering(bool software_renderer, GSInterlaceMode new_interlace)
 {
-	if (new_renderer == GSRendererType::Auto)
-		new_renderer = GSUtil::GetPreferredRenderer();
-
-	if (!g_gs_renderer || GSConfig.Renderer == new_renderer)
+	if (!g_gs_renderer)
 		return;
 
-	const bool is_software_switch = (new_renderer == GSRendererType::SW || GSConfig.Renderer == GSRendererType::SW);
-	const Pcsx2Config::GSOptions old_config(GSConfig);
-	GSConfig.Renderer = new_renderer;
 	GSConfig.InterlaceMode = new_interlace;
 
-	if (!GSreopen(!is_software_switch, true, old_config))
-		pxFailRel("Failed to reopen GS for renderer switch.");
+	if (!GSIsHardwareRenderer() != software_renderer)
+	{
+		// Config might be SW, and we're switching to HW -> use Auto.
+		const GSRendererType renderer = (software_renderer ? GSRendererType::SW :
+			(GSConfig.Renderer == GSRendererType::SW ? GSRendererType::Auto : GSConfig.Renderer));
+		if (!GSreopen(false, renderer, std::nullopt))
+			pxFailRel("Failed to reopen GS for renderer switch.");
+	}
 }
 
 bool GSSaveSnapshotToMemory(u32 window_width, u32 window_height, bool apply_aspect, bool crop_borders,
@@ -891,7 +882,7 @@ static int s_shm_fd = -1;
 
 void* GSAllocateWrappedMemory(size_t size, size_t repeat)
 {
-	ASSERT(s_shm_fd == -1);
+	pxAssert(s_shm_fd == -1);
 
 	const char* file_name = "/GS.mem";
 	s_shm_fd = shm_open(file_name, O_RDWR | O_CREAT | O_EXCL, 0600);
@@ -923,7 +914,7 @@ void* GSAllocateWrappedMemory(size_t size, size_t repeat)
 
 void GSFreeWrappedMemory(void* ptr, size_t size, size_t repeat)
 {
-	ASSERT(s_shm_fd >= 0);
+	pxAssert(s_shm_fd >= 0);
 
 	if (s_shm_fd < 0)
 		return;

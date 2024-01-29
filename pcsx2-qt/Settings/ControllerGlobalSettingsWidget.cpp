@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2023  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2024 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "Settings/ControllerGlobalSettingsWidget.h"
 #include "Settings/ControllerSettingsWindow.h"
@@ -54,7 +40,6 @@ ControllerGlobalSettingsWidget::ControllerGlobalSettingsWidget(QWidget* parent, 
 #ifdef _WIN32
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.enableXInputSource, "InputSources", "XInput", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.enableDInputSource, "InputSources", "DInput", false);
-	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.ignoreDInputInversion, "InputSources", "IgnoreDInputInversion", false);
 #else
 	m_ui.mainLayout->removeWidget(m_ui.xinputGroup);
 	m_ui.xinputGroup->deleteLater();
@@ -190,3 +175,19 @@ ControllerMouseSettingsDialog::ControllerMouseSettingsDialog(QWidget* parent, Co
 }
 
 ControllerMouseSettingsDialog::~ControllerMouseSettingsDialog() = default;
+
+ControllerMappingSettingsDialog::ControllerMappingSettingsDialog(ControllerSettingsWindow* parent)
+	: QDialog(parent)
+{
+	m_ui.setupUi(this);
+
+	SettingsInterface* sif = parent->getProfileSettingsInterface();
+
+	m_ui.icon->setPixmap(QIcon::fromTheme(QStringLiteral("settings-3-line")).pixmap(32, 32));
+
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.ignoreInversion, "InputSources", "IgnoreInversion", false);
+
+	connect(m_ui.buttonBox->button(QDialogButtonBox::Close), &QPushButton::clicked, this, &QDialog::accept);
+}
+
+ControllerMappingSettingsDialog::~ControllerMappingSettingsDialog() = default;

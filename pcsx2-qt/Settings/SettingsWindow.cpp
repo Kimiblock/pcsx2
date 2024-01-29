@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2022  PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2024 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "MainWindow.h"
 #include "QtHost.h"
@@ -46,7 +32,9 @@
 #include "common/Path.h"
 #include "common/StringUtil.h"
 
+#include <QtGui/QWheelEvent>
 #include <QtWidgets/QMessageBox>
+#include <QtWidgets/QScrollBar>
 #include <QtWidgets/QTextEdit>
 
 static QList<SettingsWindow*> s_open_game_properties_dialogs;
@@ -124,7 +112,7 @@ void SettingsWindow::setupUi(const GameList::Entry* game)
 	addWidget(m_interface_settings = new InterfaceSettingsWidget(this, m_ui.settingsContainer), tr("Interface"),
 		QStringLiteral("interface-line"),
 		tr("<strong>Interface Settings</strong><hr>These options control how the software looks and behaves.<br><br>Mouse over an option "
-		   "for additional information."));
+		   "for additional information, and Shift+Wheel to scroll this panel."));
 
 	// We don't include game list/bios settings in per-game settings.
 	if (!isPerGameSettings())
@@ -134,14 +122,15 @@ void SettingsWindow::setupUi(const GameList::Entry* game)
 			tr("<strong>Game List Settings</strong><hr>The list above shows the directories which will be searched by PCSX2 to populate "
 			   "the game list. Search directories can be added, removed, and switched to recursive/non-recursive."));
 		addWidget(m_bios_settings = new BIOSSettingsWidget(this, m_ui.settingsContainer), tr("BIOS"), QStringLiteral("chip-line"),
-			tr("<strong>BIOS Settings</strong><hr>Configure your BIOS here.<br><br>Mouse over an option for additional information."));
+			tr("<strong>BIOS Settings</strong><hr>Configure your BIOS here.<br><br>Mouse over an option for additional information, "
+			   "and Shift+Wheel to scroll this panel."));
 	}
 
 	// Common to both per-game and global settings.
 	addWidget(m_emulation_settings = new EmulationSettingsWidget(this, m_ui.settingsContainer), tr("Emulation"),
 		QStringLiteral("emulation-line"),
 		tr("<strong>Emulation Settings</strong><hr>These options determine the configuration of frame pacing and game "
-		   "settings.<br><br>Mouse over an option for additional information."));
+		   "settings.<br><br>Mouse over an option for additional information, and Shift+Wheel to scroll this panel."));
 
 	if (isPerGameSettings())
 	{
@@ -167,19 +156,19 @@ void SettingsWindow::setupUi(const GameList::Entry* game)
 
 	addWidget(m_graphics_settings = new GraphicsSettingsWidget(this, m_ui.settingsContainer), tr("Graphics"), QStringLiteral("image-fill"),
 		tr("<strong>Graphics Settings</strong><hr>These options determine the configuration of the graphical output.<br><br>Mouse over an "
-		   "option for additional information."));
+		   "option for additional information, and Shift+Wheel to scroll this panel."));
 	addWidget(m_audio_settings = new AudioSettingsWidget(this, m_ui.settingsContainer), tr("Audio"), QStringLiteral("volume-up-line"),
 		tr("<strong>Audio Settings</strong><hr>These options control the audio output of the console.<br><br>Mouse over an option for "
-		   "additional information."));
+		   "additional information, and Shift+Wheel to scroll this panel."));
 
 	addWidget(m_memory_card_settings = new MemoryCardSettingsWidget(this, m_ui.settingsContainer), tr("Memory Cards"),
 		QStringLiteral("memcard-line"),
 		tr("<strong>Memory Card Settings</strong><hr>Create and configure Memory Cards here.<br><br>Mouse over an option for "
-		   "additional information."));
+		   "additional information, and Shift+Wheel to scroll this panel."));
 
 	addWidget(m_dev9_settings = new DEV9SettingsWidget(this, m_ui.settingsContainer), tr("Network & HDD"), QStringLiteral("global-line"),
 		tr("<strong>Network & HDD Settings</strong><hr>These options control the network connectivity and internal HDD storage of the "
-		   "console.<br><br>Mouse over an option for additional information."));
+		   "console.<br><br>Mouse over an option for additional information, and Shift+Wheel to scroll this panel."));
 
 	if (!isPerGameSettings())
 	{
@@ -213,9 +202,9 @@ void SettingsWindow::setupUi(const GameList::Entry* game)
 		addWidget(m_advanced_settings = new AdvancedSettingsWidget(this, m_ui.settingsContainer), tr("Advanced"),
 			QStringLiteral("warning-line"),
 			tr("<strong>Advanced Settings</strong><hr>These are advanced options to determine the configuration of the simulated "
-			   "console.<br><br>Mouse over an option for additional information."));
+			   "console.<br><br>Mouse over an option for additional information, and Shift+Wheel to scroll this panel."));
 		addWidget(m_debug_settings = new DebugSettingsWidget(this, m_ui.settingsContainer), tr("Debug"),
-			QStringLiteral("heart-monitor-line"),
+			QStringLiteral("debugger-line"),
 			tr("<strong>Debug Settings</strong><hr>These are options which can be used to log internal information about the application. "
 			   "<strong>Do not modify unless you know what you are doing</strong>, it will cause significant slowdown, and can waste large "
 			   "amounts of disk space."));
@@ -256,7 +245,7 @@ QString SettingsWindow::getCategory() const
 void SettingsWindow::setCategory(const char* category)
 {
 	// the titles in the category list will be translated.
-	const QString translated_category(qApp->translate("SettingsDialog", category));
+	const QString translated_category(tr(category));
 
 	for (int i = 0; i < m_ui.settingsCategory->count(); i++)
 	{
@@ -327,6 +316,9 @@ void SettingsWindow::onClearSettingsClicked()
 	{
 		return;
 	}
+
+	m_game_cheat_settings_widget->disableAllCheats();
+	m_game_patch_settings_widget->disableAllPatches();
 
 	Pcsx2Config::ClearConfiguration(m_sif.get());
 	m_sif->Save();
@@ -410,8 +402,36 @@ bool SettingsWindow::eventFilter(QObject* object, QEvent* event)
 			m_ui.helpText->setText(m_category_help_text[m_ui.settingsCategory->currentRow()]);
 		}
 	}
+	else if (event->type() == QEvent::Wheel)
+	{
+		if (handleWheelEvent(static_cast<QWheelEvent*>(event)))
+			return true;
+	}
 
 	return QWidget::eventFilter(object, event);
+}
+
+bool SettingsWindow::handleWheelEvent(QWheelEvent* event)
+{
+	if (!(event->modifiers() & Qt::ShiftModifier))
+		return false;
+
+	const int amount = event->hasPixelDelta() ? event->pixelDelta().y() : (event->angleDelta().y() / 20);
+
+	QScrollBar* sb = m_ui.helpText->verticalScrollBar();
+	if (!sb)
+		return false;
+
+	sb->setSliderPosition(std::max(sb->sliderPosition() - amount, 0));
+	return true;
+}
+
+void SettingsWindow::wheelEvent(QWheelEvent* event)
+{
+	if (handleWheelEvent(event))
+		return;
+
+	QWidget::wheelEvent(event);
 }
 
 void SettingsWindow::setWindowTitle(const QString& title)
@@ -624,18 +644,21 @@ void SettingsWindow::removeSettingValue(const char* section, const char* key)
 
 void SettingsWindow::openGamePropertiesDialog(const GameList::Entry* game, const std::string_view& title, std::string serial, u32 disc_crc)
 {
-	// check for an existing dialog with this crc
+	std::string filename = VMManager::GetGameSettingsPath(serial, disc_crc);
+
+	// check for an existing dialog with this filename
 	for (SettingsWindow* dialog : s_open_game_properties_dialogs)
 	{
-		if (dialog->m_disc_crc == disc_crc)
+		if (dialog->isPerGameSettings() && static_cast<INISettingsInterface*>(dialog->m_sif.get())->GetFileName() == filename)
 		{
 			dialog->show();
+			dialog->raise();
+			dialog->activateWindow();
 			dialog->setFocus();
 			return;
 		}
 	}
 
-	std::string filename(VMManager::GetGameSettingsPath(serial, disc_crc));
 	std::unique_ptr<INISettingsInterface> sif = std::make_unique<INISettingsInterface>(filename);
 	if (FileSystem::FileExists(sif->GetFileName().c_str()))
 		sif->Load();
@@ -645,3 +668,11 @@ void SettingsWindow::openGamePropertiesDialog(const GameList::Entry* game, const
 	dialog->show();
 }
 
+void SettingsWindow::closeGamePropertiesDialogs()
+{
+	for (SettingsWindow* dialog : s_open_game_properties_dialogs)
+	{
+		dialog->close();
+		dialog->deleteLater();
+	}
+}

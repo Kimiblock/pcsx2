@@ -1,19 +1,5 @@
-/*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2023 PCSX2 Dev Team
- *
- *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
- *  of the GNU Lesser General Public License as published by the Free Software Found-
- *  ation, either version 3 of the License, or (at your option) any later version.
- *
- *  PCSX2 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
- *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- *  PURPOSE.  See the GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along with PCSX2.
- *  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include "PrecompiledHeader.h"
+// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-License-Identifier: LGPL-3.0+
 
 #include "GS/GS.h"
 #include "Host.h"
@@ -27,6 +13,7 @@
 #include "USB/usb-lightgun/guncon2.h"
 #include "VMManager.h"
 
+#include "common/Console.h"
 #include "common/StringUtil.h"
 
 #include <tuple>
@@ -440,7 +427,6 @@ namespace usb_lightgun
 
 	void GunCon2State::UpdateSoftwarePointerPosition()
 	{
-		pxAssert(has_relative_binds);
 		if (cursor_path.empty())
 			return;
 
@@ -587,25 +573,25 @@ namespace usb_lightgun
 	{
 		static constexpr const InputBindingInfo bindings[] = {
 			//{"pointer", "Pointer/Aiming", InputBindingInfo::Type::Pointer, BID_POINTER_X, GenericInputBinding::Unknown},
-			{"Up", TRANSLATE_NOOP("USB", "D-Pad Up"), InputBindingInfo::Type::Button, BID_DPAD_UP, GenericInputBinding::DPadUp},
-			{"Down", TRANSLATE_NOOP("USB", "D-Pad Down"), InputBindingInfo::Type::Button, BID_DPAD_DOWN, GenericInputBinding::DPadDown},
-			{"Left", TRANSLATE_NOOP("USB", "D-Pad Left"), InputBindingInfo::Type::Button, BID_DPAD_LEFT, GenericInputBinding::DPadLeft},
-			{"Right", TRANSLATE_NOOP("USB", "D-Pad Right"), InputBindingInfo::Type::Button, BID_DPAD_RIGHT,
+			{"Up", TRANSLATE_NOOP("USB", "D-Pad Up"), nullptr, InputBindingInfo::Type::Button, BID_DPAD_UP, GenericInputBinding::DPadUp},
+			{"Down", TRANSLATE_NOOP("USB", "D-Pad Down"), nullptr, InputBindingInfo::Type::Button, BID_DPAD_DOWN, GenericInputBinding::DPadDown},
+			{"Left", TRANSLATE_NOOP("USB", "D-Pad Left"), nullptr, InputBindingInfo::Type::Button, BID_DPAD_LEFT, GenericInputBinding::DPadLeft},
+			{"Right", TRANSLATE_NOOP("USB", "D-Pad Right"), nullptr, InputBindingInfo::Type::Button, BID_DPAD_RIGHT,
 				GenericInputBinding::DPadRight},
-			{"Trigger", TRANSLATE_NOOP("USB", "Trigger"), InputBindingInfo::Type::Button, BID_TRIGGER, GenericInputBinding::R2},
-			{"ShootOffscreen", TRANSLATE_NOOP("USB", "Shoot Offscreen"), InputBindingInfo::Type::Button, BID_SHOOT_OFFSCREEN,
+			{"Trigger", TRANSLATE_NOOP("USB", "Trigger"), nullptr, InputBindingInfo::Type::Button, BID_TRIGGER, GenericInputBinding::R2},
+			{"ShootOffscreen", TRANSLATE_NOOP("USB", "Shoot Offscreen"), nullptr, InputBindingInfo::Type::Button, BID_SHOOT_OFFSCREEN,
 				GenericInputBinding::R1},
-			{"Recalibrate", TRANSLATE_NOOP("USB", "Calibration Shot"), InputBindingInfo::Type::Button, BID_RECALIBRATE,
+			{"Recalibrate", TRANSLATE_NOOP("USB", "Calibration Shot"), nullptr, InputBindingInfo::Type::Button, BID_RECALIBRATE,
 				GenericInputBinding::Unknown},
-			{"A", TRANSLATE_NOOP("USB", "A"), InputBindingInfo::Type::Button, BID_A, GenericInputBinding::Cross},
-			{"B", TRANSLATE_NOOP("USB", "B"), InputBindingInfo::Type::Button, BID_B, GenericInputBinding::Circle},
-			{"C", TRANSLATE_NOOP("USB", "C"), InputBindingInfo::Type::Button, BID_C, GenericInputBinding::Triangle},
-			{"Select", TRANSLATE_NOOP("USB", "Select"), InputBindingInfo::Type::Button, BID_SELECT, GenericInputBinding::Select},
-			{"Start", TRANSLATE_NOOP("USB", "Start"), InputBindingInfo::Type::Button, BID_START, GenericInputBinding::Start},
-			{"RelativeLeft", TRANSLATE_NOOP("USB", "Relative Left"), InputBindingInfo::Type::HalfAxis, BID_RELATIVE_LEFT, GenericInputBinding::Unknown},
-			{"RelativeRight", TRANSLATE_NOOP("USB", "Relative Right"), InputBindingInfo::Type::HalfAxis, BID_RELATIVE_RIGHT, GenericInputBinding::Unknown},
-			{"RelativeUp", TRANSLATE_NOOP("USB", "Relative Up"), InputBindingInfo::Type::HalfAxis, BID_RELATIVE_UP, GenericInputBinding::Unknown},
-			{"RelativeDown", TRANSLATE_NOOP("USB", "Relative Down"), InputBindingInfo::Type::HalfAxis, BID_RELATIVE_DOWN, GenericInputBinding::Unknown},
+			{"A", TRANSLATE_NOOP("USB", "A"), nullptr, InputBindingInfo::Type::Button, BID_A, GenericInputBinding::Cross},
+			{"B", TRANSLATE_NOOP("USB", "B"), nullptr, InputBindingInfo::Type::Button, BID_B, GenericInputBinding::Circle},
+			{"C", TRANSLATE_NOOP("USB", "C"), nullptr, InputBindingInfo::Type::Button, BID_C, GenericInputBinding::Triangle},
+			{"Select", TRANSLATE_NOOP("USB", "Select"), nullptr, InputBindingInfo::Type::Button, BID_SELECT, GenericInputBinding::Select},
+			{"Start", TRANSLATE_NOOP("USB", "Start"), nullptr, InputBindingInfo::Type::Button, BID_START, GenericInputBinding::Start},
+			{"RelativeLeft", TRANSLATE_NOOP("USB", "Relative Left"), nullptr, InputBindingInfo::Type::HalfAxis, BID_RELATIVE_LEFT, GenericInputBinding::Unknown},
+			{"RelativeRight", TRANSLATE_NOOP("USB", "Relative Right"), nullptr, InputBindingInfo::Type::HalfAxis, BID_RELATIVE_RIGHT, GenericInputBinding::Unknown},
+			{"RelativeUp", TRANSLATE_NOOP("USB", "Relative Up"), nullptr, InputBindingInfo::Type::HalfAxis, BID_RELATIVE_UP, GenericInputBinding::Unknown},
+			{"RelativeDown", TRANSLATE_NOOP("USB", "Relative Down"), nullptr, InputBindingInfo::Type::HalfAxis, BID_RELATIVE_DOWN, GenericInputBinding::Unknown},
 		};
 
 		return bindings;
